@@ -1,0 +1,42 @@
+name: geo_tree
+
+services:
+  mongodb:
+    image: mongo:7.0
+    container_name: geo-tree-mongodb
+    restart: unless-stopped
+    ports:
+      # Spec default is 27018. Override in a local .env (see .env.example) if that port is taken.
+      - "${GEO_TREE_MONGO_HOST_PORT:-27018}:27017"
+    volumes:
+      - geo_tree_mongodb_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  backend:
+    build: ./backend
+    container_name: geo-tree-backend
+    restart: unless-stopped
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    environment:
+      ENVIRONMENT: ${GEO_TREE_ENVIRONMENT:-development}
+      MONGO_URI: mongodb://mongodb:27017
+      MONGO_DATABASE: geo_tree
+      JWT_SECRET: ${GEO_TREE_JWT_SECRET:-}
+      UPLOAD_DIR: /app/uploads
+    ports:
+      - "${GEO_TREE_API_HOST_PORT:-8000}:8000"
+    volumes:
+      - geo_tree_uploads:/app/uploads
+
+volumes:
+  geo_tree_mongodb_data:
+    name: geo_tree_mongodb_data
+  geo_tree_uploads:
+    name: geo_tree_uploads

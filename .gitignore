@@ -1,0 +1,38 @@
+# Secrets and local configuration
+.env
+*.env
+!.env.example
+local.properties
+secrets.properties
+*.jks
+*.keystore
+google-services.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+
+# Uploaded tree images (runtime data)
+backend/uploads/**
+!backend/uploads/tree_images/
+!backend/uploads/tree_images/.gitkeep
+
+# Gradle / Android
+.gradle/
+.kotlin/
+build/
+/android/app/release/
+captures/
+*.apk
+*.aab
+*.iml
+.idea/
+.cxx/
+.externalNativeBuild/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
