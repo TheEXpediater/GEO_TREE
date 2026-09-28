@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # GEO Tree
 
 Android field-mapping app for registering and geotagging tamarind trees. It works offline first and syncs to a shared FastAPI/MongoDB backend.
@@ -190,3 +191,6 @@ Errors are structured as `{"error": {"code": "...", "message": "...", "details":
 ## Next milestone
 
 AI leaf assessment: capture a leaf photo from Tree Detail and classify it on-device. This builds on the existing tree UUID, image pipeline and sync.
+=======
+# GEO_TREE
+>>>>>>> origin/main
