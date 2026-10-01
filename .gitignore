@@ -26,6 +26,7 @@ build/
 /android/app/release/
 captures/
 *.apk
+*.apk.sha256
 *.aab
 *.iml
 .idea/
@@ -36,3 +37,13 @@ captures/
 .DS_Store
 Thumbs.db
 .vscode/
+
+# Offline map builder: raw OSM extract and temp output (regenerate with tools/offline_map/fetch_osm.py)
+tools/offline_map/osm_raw.json
+tools/offline_map/overpass_query.txt
+tools/offline_map/*.tmp
+tools/offline_map/preview/
+
+# Physical-device test build copied to the repository root (never commit)
+GEO_Tree_Test.apk
+GEO_Tree_Test.apk.sha256

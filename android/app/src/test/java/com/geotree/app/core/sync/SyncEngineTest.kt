@@ -15,6 +15,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -185,5 +186,17 @@ class SyncEngineTest {
         assertFalse(tracker.state.value.running)
         assertTrue(tracker.state.value.lastOutcome is SyncOutcome.BackendUnavailable)
         assertEquals(42L, tracker.state.value.lastFinishedAt)
+    }
+
+    @Test
+    fun `last successful sync time is recorded only for completed runs`() = runTest {
+        createTree("GEO-TAM-010")
+        server.healthy = false
+        assertTrue(engine.sync() is SyncOutcome.BackendUnavailable)
+        assertNull(preferences.lastSuccessfulSyncAt.first())
+
+        server.healthy = true
+        assertTrue(engine.sync() is SyncOutcome.Completed)
+        assertTrue(preferences.lastSuccessfulSyncAt.first() != null)
     }
 }

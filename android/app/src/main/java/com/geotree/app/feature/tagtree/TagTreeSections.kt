@@ -42,6 +42,8 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.geotree.app.R
@@ -109,10 +111,11 @@ fun GpsCard(
     onAcquire: () -> Unit,
     onRequestPermission: () -> Unit,
     onOpenLocationSettings: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     OutlinedCard(
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-        modifier = Modifier.fillMaxWidth().testTag("gps_card"),
+        modifier = modifier.fillMaxWidth().testTag("gps_card"),
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -214,8 +217,8 @@ fun CoordinateRow(label: String, value: String?, tag: String, monospace: Boolean
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun OptionalDetailsSection(state: TagTreeUiState, viewModel: TagTreeViewModel) {
-    OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+fun OptionalDetailsSection(state: TagTreeUiState, viewModel: TagTreeViewModel, modifier: Modifier = Modifier) {
+    OutlinedCard(modifier = modifier.fillMaxWidth()) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
@@ -238,8 +241,8 @@ fun OptionalDetailsSection(state: TagTreeUiState, viewModel: TagTreeViewModel) {
                     singleLine = true,
                     isError = state.ageError != null,
                     supportingText = state.ageError?.let { { Text(it) } },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier.fillMaxWidth(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Next),
+                    modifier = Modifier.fillMaxWidth().testTag("detail_age"),
                 )
                 ChoiceChips("Taste Category", listOf("Sweet", "Sour", "Sweet-sour"), state.tasteCategory, viewModel::onTasteChange)
                 OutlinedTextField(
@@ -249,8 +252,8 @@ fun OptionalDetailsSection(state: TagTreeUiState, viewModel: TagTreeViewModel) {
                     singleLine = true,
                     isError = state.yieldError != null,
                     supportingText = state.yieldError?.let { { Text(it) } },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    modifier = Modifier.fillMaxWidth(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Next),
+                    modifier = Modifier.fillMaxWidth().testTag("detail_yield"),
                 )
                 ChoiceChips("Fruit Quality", listOf("Excellent", "Good", "Fair", "Poor"), state.fruitQuality, viewModel::onFruitQualityChange)
                 OutlinedTextField(
@@ -258,7 +261,8 @@ fun OptionalDetailsSection(state: TagTreeUiState, viewModel: TagTreeViewModel) {
                     onValueChange = viewModel::onNotesChange,
                     label = { Text("Notes") },
                     minLines = 2,
-                    modifier = Modifier.fillMaxWidth(),
+                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+                    modifier = Modifier.fillMaxWidth().testTag("detail_notes"),
                 )
             }
         }

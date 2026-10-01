@@ -23,6 +23,27 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
+/** Form areas the screen can scroll to (and focus) after a failed save. Top-to-bottom screen order. */
+enum class TagTreeField { TREE_CODE, DETAILS, LOCATION }
+
+/** A one-shot "show this field" request; [nonce] makes a repeated request for the same field distinct. */
+data class FieldAttention(val field: TagTreeField, val nonce: Long)
+
+/**
+ * The first problem the user should see, in screen order. Pure so it can be unit-tested.
+ * Returns null when nothing visible needs attention.
+ */
+fun firstFieldNeedingAttention(errors: Set<DraftError>, detailsInvalid: Boolean = false): TagTreeField? = when {
+    DraftError.TREE_CODE_BLANK in errors || DraftError.TREE_CODE_FORMAT in errors -> TagTreeField.TREE_CODE
+    detailsInvalid || DraftError.AGE_INVALID in errors || DraftError.YIELD_INVALID in errors -> TagTreeField.DETAILS
+    errors.any { it in LOCATION_ERRORS } -> TagTreeField.LOCATION
+    else -> null
+}
+
+private val LOCATION_ERRORS = setOf(
+    DraftError.LOCATION_MISSING, DraftError.LATITUDE_RANGE, DraftError.LONGITUDE_RANGE, DraftError.ACCURACY_INVALID,
+)
+
 data class TagTreeUiState(
     val imagePath: String? = null,
     val cameraOpen: Boolean = false,
@@ -42,6 +63,7 @@ data class TagTreeUiState(
     val formError: String? = null,
     val confirmLowAccuracy: Boolean = false,
     val saved: SavedTree? = null,
+    val attention: FieldAttention? = null,
 )
 
 data class SavedTree(val id: String, val treeCode: String)
@@ -58,6 +80,9 @@ class TagTreeViewModel(
 
     private var locationJob: Job? = null
     private var codeCheckJob: Job? = null
+    private var attentionNonce = 0L
+
+    private fun attention(field: TagTreeField?) = field?.let { FieldAttention(it, ++attentionNonce) }
 
     init {
         // Start acquiring right away when permission already exists; otherwise wait for the user.
@@ -152,7 +177,9 @@ class TagTreeViewModel(
         val ageError = if (s.ageText.isNotBlank() && age == null) DraftError.AGE_INVALID.message else null
         val yieldError = if (s.yieldText.isNotBlank() && yearlyYield == null) "Enter a number, e.g. 120.5" else null
         if (ageError != null || yieldError != null) {
-            _state.update { it.copy(ageError = ageError, yieldError = yieldError, detailsExpanded = true) }
+            _state.update {
+                it.copy(ageError = ageError, yieldError = yieldError, detailsExpanded = true, attention = attention(TagTreeField.DETAILS))
+            }
             return
         }
         val draft = TreeDraft(
@@ -178,7 +205,11 @@ class TagTreeViewModel(
                     onTreeSaved()
                 }
                 is CreateTreeResult.DuplicateTreeCode -> _state.update {
-                    it.copy(saving = false, treeCodeError = "${result.treeCode} is already registered on this device.")
+                    it.copy(
+                        saving = false,
+                        treeCodeError = "${result.treeCode} is already registered on this device.",
+                        attention = attention(TagTreeField.TREE_CODE),
+                    )
                 }
                 is CreateTreeResult.Invalid -> {
                     _state.update { it.copy(saving = false) }
@@ -195,6 +226,7 @@ class TagTreeViewModel(
             it.copy(
                 treeCodeError = codeError?.message ?: it.treeCodeError,
                 formError = other.joinToString("\n") { e -> e.message }.ifEmpty { null },
+                attention = attention(firstFieldNeedingAttention(errors)),
             )
         }
     }

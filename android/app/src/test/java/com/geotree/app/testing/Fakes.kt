@@ -10,6 +10,9 @@ import com.geotree.app.core.database.TreeDao
 import com.geotree.app.core.database.TreeEntity
 import com.geotree.app.core.location.GpsAccuracyPolicy
 import com.geotree.app.core.location.GpsFix
+import com.geotree.app.core.location.LocationPermission
+import com.geotree.app.core.location.LocationSource
+import com.geotree.app.core.location.LocationUpdateProfile
 import com.geotree.app.data.remote.GeoTreeApi
 import com.geotree.app.data.remote.HealthDto
 import com.geotree.app.data.remote.LoginRequestDto
@@ -24,7 +27,9 @@ import java.io.IOException
 import java.time.Instant
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
@@ -189,4 +194,42 @@ fun gpsFix(
     longitude: Double = 120.588700,
     accuracy: Float = 4.2f,
     capturedAt: Long = 1_790_000_000_000,
-) = GpsFix(latitude, longitude, accuracy, altitudeMeters = null, capturedAt = capturedAt, quality = GpsAccuracyPolicy.Default.classify(accuracy))
+    speedMps: Float? = null,
+    speedAccuracyMps: Float? = null,
+) = GpsFix(
+    latitude, longitude, accuracy, altitudeMeters = null, capturedAt = capturedAt,
+    quality = GpsAccuracyPolicy.Default.classify(accuracy), speedMps = speedMps, speedAccuracyMps = speedAccuracyMps,
+)
+
+/** A point [north] and [east] meters away from ([latitude], [longitude]); fine for field-scale offsets. */
+fun offsetMeters(latitude: Double, longitude: Double, north: Double, east: Double): Pair<Double, Double> {
+    val metersPerDegree = Math.PI * 6_371_008.8 / 180.0
+    return (latitude + north / metersPerDegree) to (longitude + east / (metersPerDegree * Math.cos(Math.toRadians(latitude))))
+}
+
+/**
+ * Scriptable [LocationSource]. Tracks how many update streams are open so tests can prove
+ * GPS is released (no location-update leak) and which update profile was requested.
+ */
+class FakeLocationSource(
+    var permission: LocationPermission = LocationPermission.PRECISE,
+    var locationEnabled: Boolean = true,
+) : LocationSource {
+    override val lastFix = MutableStateFlow<GpsFix?>(null)
+    val fixes = MutableSharedFlow<GpsFix>(extraBufferCapacity = 64)
+    val requestedProfiles = mutableListOf<LocationUpdateProfile>()
+    var openStreams = 0
+        private set
+
+    override fun permission() = permission
+    override fun isLocationEnabled() = locationEnabled
+    override fun updates(profile: LocationUpdateProfile): Flow<GpsFix> = flow {
+        requestedProfiles += profile
+        openStreams++
+        try {
+            fixes.collect { emit(it) }
+        } finally {
+            openStreams--
+        }
+    }
+}

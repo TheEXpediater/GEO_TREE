@@ -26,7 +26,11 @@ data class GpsAccuracyPolicy(
     }
 }
 
-/** A real reading reported by Android location services. Never constructed from user input. */
+/**
+ * A real reading reported by Android location services. Never constructed from user input.
+ * [speedMps] / [speedAccuracyMps] are null when Android did not report them; they are raw
+ * readings and must go through a plausibility filter before being shown as the user's speed.
+ */
 data class GpsFix(
     val latitude: Double,
     val longitude: Double,
@@ -34,4 +38,6 @@ data class GpsFix(
     val altitudeMeters: Double?,
     val capturedAt: Long,
     val quality: GpsQuality,
+    val speedMps: Float? = null,
+    val speedAccuracyMps: Float? = null,
 )

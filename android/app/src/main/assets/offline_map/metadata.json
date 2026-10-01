@@ -1,0 +1,32 @@
+{
+  "id": "psau_magalang",
+  "name": "PSAU / Magalang",
+  "version": "2026.10.01-r1",
+  "file": "psau_magalang.mbtiles",
+  "format": "mbtiles",
+  "tile_encoding": "webp",
+  "tile_pixels": 512,
+  "bytes": 5754880,
+  "sha256": "8e6a208b3399c135e5e589a607f35d9c8d2bf674f4ac814cfc4b4354174e6133",
+  "min_zoom": 13,
+  "max_zoom": 17,
+  "min_latitude": 15.198,
+  "max_latitude": 15.24,
+  "min_longitude": 120.648,
+  "max_longitude": 120.715,
+  "center_latitude": 15.21851,
+  "center_longitude": 120.69557,
+  "tiles": 593,
+  "tiles_per_zoom": {
+    "13": 4,
+    "14": 12,
+    "15": 35,
+    "16": 117,
+    "17": 425
+  },
+  "source": "OpenStreetMap data via Overpass API bbox extract, rendered locally by tools/offline_map/build_offline_map.py",
+  "osm_data_timestamp": "2026-07-15T15:22:01Z",
+  "license": "Map data © OpenStreetMap contributors, ODbL 1.0 (https://www.openstreetmap.org/copyright)",
+  "attribution": "© OpenStreetMap contributors",
+  "generated_at": "2026-10-01T18:45:05+00:00"
+}

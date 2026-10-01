@@ -106,7 +106,7 @@ class TreeDetailViewModel(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun TreeDetailScreen(treeId: String, onBack: () -> Unit, onCenterOnMap: (String) -> Unit) {
+fun TreeDetailScreen(treeId: String, onBack: () -> Unit, onCenterOnMap: (String) -> Unit, onNavigate: (String) -> Unit) {
     val viewModel = geoViewModel(key = "tree_$treeId") { c, _ -> TreeDetailViewModel(c.treeRepository, c.syncScheduler, treeId) }
     val load by viewModel.tree.collectAsStateWithLifecycle()
     val renameError by viewModel.renameError.collectAsStateWithLifecycle()
@@ -129,6 +129,7 @@ fun TreeDetailScreen(treeId: String, onBack: () -> Unit, onCenterOnMap: (String)
             is TreeLoad.Loaded -> TreeDetailContent(
                 tree = state.tree,
                 onCenterOnMap = { onCenterOnMap(state.tree.id) },
+                onNavigate = { onNavigate(state.tree.id) },
                 onRetrySync = viewModel::retrySync,
                 onRename = { renaming = true },
                 modifier = Modifier.padding(padding),
@@ -163,6 +164,7 @@ fun TreeDetailScreen(treeId: String, onBack: () -> Unit, onCenterOnMap: (String)
 private fun TreeDetailContent(
     tree: TreeEntity,
     onCenterOnMap: () -> Unit,
+    onNavigate: () -> Unit,
     onRetrySync: () -> Unit,
     onRename: () -> Unit,
     modifier: Modifier = Modifier,
@@ -229,10 +231,17 @@ private fun TreeDetailContent(
             }
         }
 
-        Button(onClick = onCenterOnMap, modifier = Modifier.fillMaxWidth().testTag("center_on_map")) {
-            Icon(painterResource(R.drawable.ic_my_location), contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.size(8.dp))
-            Text("Center on Map")
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedButton(onClick = onCenterOnMap, modifier = Modifier.weight(1f).testTag("center_on_map")) {
+                Icon(painterResource(R.drawable.ic_my_location), contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.size(8.dp))
+                Text("Center on Map")
+            }
+            Button(onClick = onNavigate, modifier = Modifier.weight(1f).testTag("detail_navigate")) {
+                Icon(painterResource(R.drawable.ic_near_me), contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.size(8.dp))
+                Text("Navigate to Tree")
+            }
         }
 
         OutlinedCard(Modifier.fillMaxWidth()) {

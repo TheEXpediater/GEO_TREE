@@ -13,8 +13,16 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -38,6 +46,11 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -57,7 +70,7 @@ import com.geotree.app.core.design.GeoTreeLogo
 import com.geotree.app.core.location.GpsAccuracyPolicy
 import com.geotree.app.geoViewModel
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun TagTreeScreen(onBack: () -> Unit, onSaved: (id: String, treeCode: String) -> Unit) {
     val context = LocalContext.current
@@ -74,6 +87,32 @@ fun TagTreeScreen(onBack: () -> Unit, onSaved: (id: String, treeCode: String) ->
     }
 
     LaunchedEffect(state.saved) { state.saved?.let { onSaved(it.id, it.treeCode) } }
+
+    // The keyboard is closed only for actions that need the screen (camera, GPS, save, dialogs),
+    // never on keystrokes.
+    val focusManager = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    val dismissKeyboard = {
+        keyboard?.hide()
+        focusManager.clearFocus(force = true)
+    }
+    val codeFocus = remember { FocusRequester() }
+    val codeInView = remember { BringIntoViewRequester() }
+    val detailsInView = remember { BringIntoViewRequester() }
+    val gpsInView = remember { BringIntoViewRequester() }
+
+    // After a failed save, scroll the first problem into view (and focus the Tree Code when that is it).
+    LaunchedEffect(state.attention) {
+        when (state.attention?.field) {
+            TagTreeField.TREE_CODE -> {
+                codeInView.bringIntoView()
+                codeFocus.requestFocus()
+            }
+            TagTreeField.DETAILS -> detailsInView.bringIntoView()
+            TagTreeField.LOCATION -> gpsInView.bringIntoView()
+            null -> Unit
+        }
+    }
 
     if (state.cameraOpen) {
         BackHandler(onBack = viewModel::closeCamera)
@@ -96,12 +135,15 @@ fun TagTreeScreen(onBack: () -> Unit, onSaved: (id: String, treeCode: String) ->
                     }
                 },
                 navigationIcon = {
-                    IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back to Field Locator") }
+                    IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
                 },
             )
         },
         bottomBar = {
-            SaveBar(saving = state.saving, onSave = { viewModel.save() })
+            SaveBar(saving = state.saving, onSave = {
+                dismissKeyboard()
+                viewModel.save()
+            })
         },
         containerColor = MaterialTheme.colorScheme.background,
     ) { padding ->
@@ -109,15 +151,20 @@ fun TagTreeScreen(onBack: () -> Unit, onSaved: (id: String, treeCode: String) ->
             verticalArrangement = Arrangement.spacedBy(16.dp),
             modifier = Modifier
                 .fillMaxSize()
+                // Scaffold's bottom padding already includes the Save bar, which itself sits above the
+                // keyboard, so the form scrolls in the space between the app bar and the Save bar.
                 .padding(padding)
-                .imePadding()
+                .consumeWindowInsets(padding)
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp, vertical = 8.dp),
         ) {
             TreeImageSection(
                 imagePath = state.imagePath,
                 message = state.cameraMessage,
-                onCapture = { cameraPermission.launch(Manifest.permission.CAMERA) },
+                onCapture = {
+                    dismissKeyboard()
+                    cameraPermission.launch(Manifest.permission.CAMERA)
+                },
             )
             OutlinedTextField(
                 value = state.treeCode,
@@ -129,17 +176,26 @@ fun TagTreeScreen(onBack: () -> Unit, onSaved: (id: String, treeCode: String) ->
                 supportingText = { Text(state.treeCodeError ?: "Human-readable code, unique per tree. e.g. GEO-TAM-003") },
                 visualTransformation = UppercaseTransformation,
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters, imeAction = ImeAction.Done),
-                modifier = Modifier.fillMaxWidth().testTag("tree_code"),
+                keyboardActions = KeyboardActions(onDone = { dismissKeyboard() }),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .bringIntoViewRequester(codeInView)
+                    .focusRequester(codeFocus)
+                    .testTag("tree_code"),
             )
+            OptionalDetailsSection(state = state, viewModel = viewModel, modifier = Modifier.bringIntoViewRequester(detailsInView))
             GpsCard(
                 location = state.location,
-                onAcquire = viewModel::acquireLocation,
+                onAcquire = {
+                    dismissKeyboard()
+                    viewModel.acquireLocation()
+                },
                 onRequestPermission = {
                     locationPermission.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
                 },
                 onOpenLocationSettings = { context.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)) },
+                modifier = Modifier.bringIntoViewRequester(gpsInView),
             )
-            OptionalDetailsSection(state = state, viewModel = viewModel)
             state.formError?.let { message ->
                 Surface(color = MaterialTheme.colorScheme.errorContainer, shape = MaterialTheme.shapes.small, modifier = Modifier.fillMaxWidth()) {
                     Text(message, color = MaterialTheme.colorScheme.onErrorContainer, modifier = Modifier.padding(12.dp).testTag("form_error"))
@@ -154,7 +210,9 @@ fun TagTreeScreen(onBack: () -> Unit, onSaved: (id: String, treeCode: String) ->
             onDismissRequest = viewModel::dismissLowAccuracyDialog,
             title = { Text("Low GPS accuracy") },
             text = { Text("${GpsAccuracyPolicy.LOW_ACCURACY_MESSAGE}\n\nThe reading is valid, so you can still save it and recapture later.") },
-            confirmButton = { TextButton(onClick = { viewModel.save(confirmLowAccuracy = true) }) { Text("Save Anyway") } },
+            confirmButton = {
+                TextButton(onClick = { viewModel.save(confirmLowAccuracy = true) }, modifier = Modifier.testTag("save_anyway")) { Text("Save Anyway") }
+            },
             dismissButton = {
                 TextButton(onClick = {
                     viewModel.dismissLowAccuracyDialog()
@@ -170,6 +228,7 @@ internal val UppercaseTransformation = VisualTransformation { text ->
     TransformedText(AnnotatedString(text.text.uppercase()), OffsetMapping.Identity)
 }
 
+/** Stays reachable above the soft keyboard (IME) as well as above the navigation bar. */
 @Composable
 private fun SaveBar(saving: Boolean, onSave: () -> Unit) {
     Surface(tonalElevation = 3.dp, shadowElevation = 6.dp) {
@@ -178,7 +237,7 @@ private fun SaveBar(saving: Boolean, onSave: () -> Unit) {
             enabled = !saving,
             modifier = Modifier
                 .fillMaxWidth()
-                .navigationBarsPadding()
+                .windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars))
                 .padding(horizontal = 16.dp, vertical = 12.dp)
                 .height(54.dp)
                 .testTag("save_tag"),

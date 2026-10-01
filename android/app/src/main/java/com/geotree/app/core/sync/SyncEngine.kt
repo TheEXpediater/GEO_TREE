@@ -59,6 +59,7 @@ class SyncEngine(
     private val sessionStore: SessionStore,
     private val preferences: SyncPreferences,
     private val tracker: SyncStatusTracker,
+    private val clock: () -> Long = System::currentTimeMillis,
 ) {
     private val mutex = Mutex()
 
@@ -67,6 +68,7 @@ class SyncEngine(
         var outcome: SyncOutcome = SyncOutcome.Interrupted("Sync cancelled", 0)
         try {
             outcome = runSync()
+            if (outcome is SyncOutcome.Completed) preferences.setLastSuccessfulSyncAt(clock())
         } finally {
             tracker.finished(outcome)
         }

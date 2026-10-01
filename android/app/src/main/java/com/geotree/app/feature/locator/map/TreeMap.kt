@@ -26,41 +26,71 @@ import com.geotree.app.core.database.SyncStatus
 import com.geotree.app.core.database.TreeEntity
 import com.geotree.app.core.design.GeoColors
 import com.geotree.app.core.location.GpsFix
+import com.geotree.app.feature.navigation.GeoPoint
 import kotlin.math.hypot
+import kotlinx.coroutines.delay
+import kotlin.math.min
 import org.maplibre.android.MapLibre
 import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
+import org.maplibre.android.geometry.LatLngBounds
 import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.Style
 import org.maplibre.android.style.expressions.Expression
 import org.maplibre.android.style.layers.CircleLayer
+import org.maplibre.android.style.layers.LineLayer
+import org.maplibre.android.style.layers.Property
 import org.maplibre.android.style.layers.PropertyFactory
 import org.maplibre.android.style.sources.GeoJsonSource
 import org.maplibre.geojson.Feature
 import org.maplibre.geojson.FeatureCollection
+import org.maplibre.geojson.LineString
 import org.maplibre.geojson.Point
 
-/** A camera target. [nonce] makes repeated requests for the same place distinct. */
-data class MapCamera(val latitude: Double, val longitude: Double, val zoom: Double, val nonce: Long = 0)
+/** Where the camera rests; restored when returning to the Map tab. */
+data class MapCamera(val latitude: Double, val longitude: Double, val zoom: Double)
+
+/** A one-off camera move requested by the ViewModel. [nonce] makes repeated requests distinct. */
+sealed interface CameraCommand {
+    val nonce: Long
+
+    /** [zoom] null keeps the user's current zoom (used by Follow Location). */
+    data class Center(
+        val latitude: Double,
+        val longitude: Double,
+        val zoom: Double?,
+        val durationMillis: Int = 700,
+        override val nonce: Long,
+    ) : CameraCommand
+
+    /** Shows all [points], never zooming in past [maxZoom]. */
+    data class Fit(val points: List<GeoPoint>, val maxZoom: Double, override val nonce: Long) : CameraCommand
+}
 
 /**
- * All map-provider code lives in this file (MapLibre + OpenStreetMap raster tiles, no API key).
- * Tree records never depend on tiles: markers come from the [trees] list, which comes from Room.
- * Swapping to an offline tile source later only changes [STYLE_JSON].
+ * All map-provider code lives in this package (MapLibre). Tree records never depend on tiles:
+ * markers come from [trees] (Room), the guidance line from [route]. The basemap is whatever
+ * [styleJson] describes (see [MapSourceType]); the GEO Tree layers are added on top of any style.
  */
 @Composable
 fun TreeMap(
+    styleJson: String,
     trees: List<TreeEntity>,
     selectedTreeId: String?,
+    destinationTreeId: String?,
+    route: List<GeoPoint>?,
     currentFix: GpsFix?,
-    cameraCommand: MapCamera?,
-    initialCamera: MapCamera?,
+    cameraCommand: CameraCommand?,
+    initialCamera: MapCamera,
+    minZoom: Double,
     topInset: Dp,
     bottomInset: Dp,
+    fitBottomInset: Dp,
     onTreeClick: (String) -> Unit,
     onMapClick: () -> Unit,
+    onUserGesture: () -> Unit,
     onCameraIdle: (MapCamera) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -75,8 +105,11 @@ fun TreeMap(
     var style by remember { mutableStateOf<Style?>(null) }
     val latestTreeClick by rememberUpdatedState(onTreeClick)
     val latestMapClick by rememberUpdatedState(onMapClick)
+    val latestGesture by rememberUpdatedState(onUserGesture)
     val latestCameraIdle by rememberUpdatedState(onCameraIdle)
     val latestFix by rememberUpdatedState(currentFix)
+    val latestTopInset by rememberUpdatedState(topInset)
+    val latestFitBottomInset by rememberUpdatedState(fitBottomInset)
 
     DisposableEffect(lifecycle, mapView) {
         var started = false
@@ -101,19 +134,12 @@ fun TreeMap(
 
     LaunchedEffect(mapView) {
         mapView.getMapAsync { m ->
-            val start = initialCamera ?: DEFAULT_CAMERA
-            m.cameraPosition = CameraPosition.Builder().target(LatLng(start.latitude, start.longitude)).zoom(start.zoom).build()
-            with(density) {
-                val top = topInset.roundToPx()
-                val bottom = bottomInset.roundToPx()
-                m.uiSettings.setCompassMargins(0, top, 16.dp.roundToPx(), 0)
-                m.uiSettings.setLogoMargins(16.dp.roundToPx(), 0, 0, bottom)
-                m.uiSettings.setAttributionMargins(16.dp.roundToPx() + 96.dp.roundToPx(), 0, 0, bottom)
-            }
-            m.setStyle(Style.Builder().fromJson(STYLE_JSON)) { loaded ->
-                installLayers(loaded)
-                style = loaded
-            }
+            m.cameraPosition = CameraPosition.Builder()
+                .target(LatLng(initialCamera.latitude, initialCamera.longitude))
+                .zoom(initialCamera.zoom)
+                .build()
+            m.uiSettings.isCompassEnabled = true
+            m.uiSettings.setCompassFadeFacingNorth(false)
             m.addOnMapClickListener { point ->
                 val screen = m.projection.toScreenLocation(point)
                 val slop = with(density) { 22.dp.toPx() }
@@ -121,6 +147,10 @@ fun TreeMap(
                 val id = hit.firstOrNull()?.getStringProperty("id")
                 if (id != null) latestTreeClick(id) else latestMapClick()
                 true
+            }
+            m.addOnCameraMoveStartedListener { reason ->
+                // Only a finger on the map cancels Follow Location; our own animations do not.
+                if (reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE) latestGesture()
             }
             m.addOnCameraMoveListener { style?.let { updateAccuracyHalo(m, it, latestFix, density.density) } }
             m.addOnCameraIdleListener {
@@ -131,17 +161,53 @@ fun TreeMap(
         }
     }
 
-    LaunchedEffect(style, trees, selectedTreeId) {
+    // (Re)load the basemap style. GEO Tree layers are re-added to every style.
+    LaunchedEffect(map, styleJson) {
+        val m = map ?: return@LaunchedEffect
+        style = null
+        m.setStyle(Style.Builder().fromJson(styleJson)) { loaded ->
+            installLayers(loaded)
+            style = loaded
+        }
+    }
+
+    // Keeps the offline map from zooming out to an empty world; online mode has no floor.
+    LaunchedEffect(map, minZoom) {
+        map?.setMinZoomPreference(minZoom)
+    }
+
+    LaunchedEffect(map, topInset, bottomInset) {
+        val m = map ?: return@LaunchedEffect
+        with(density) {
+            val top = topInset.roundToPx()
+            val bottom = bottomInset.roundToPx()
+            val side = 16.dp.roundToPx()
+            m.uiSettings.setCompassMargins(0, top, side, 0)
+            m.uiSettings.setLogoMargins(side, 0, 0, bottom)
+            m.uiSettings.setAttributionMargins(side + 96.dp.roundToPx(), 0, 0, bottom)
+        }
+    }
+
+    LaunchedEffect(style, trees, selectedTreeId, destinationTreeId) {
         val s = style ?: return@LaunchedEffect
-        // Selected marker last so it renders on top.
-        val features = trees.sortedBy { it.id == selectedTreeId }.map { tree ->
+        // Selected and destination markers last so they render on top.
+        val features = trees.sortedBy { (it.id == selectedTreeId) || (it.id == destinationTreeId) }.map { tree ->
             Feature.fromGeometry(Point.fromLngLat(tree.longitude, tree.latitude)).apply {
                 addStringProperty("id", tree.id)
                 addStringProperty("sync", tree.syncStatus.name)
                 addBooleanProperty("selected", tree.id == selectedTreeId)
+                addBooleanProperty("destination", tree.id == destinationTreeId)
             }
         }
         s.getSourceAs<GeoJsonSource>(TREE_SOURCE)?.setGeoJson(FeatureCollection.fromFeatures(features))
+    }
+
+    LaunchedEffect(style, route) {
+        val s = style ?: return@LaunchedEffect
+        val line = route?.takeIf { it.size >= 2 }
+        val collection = if (line == null) FeatureCollection.fromFeatures(emptyList())
+        else FeatureCollection.fromFeature(Feature.fromGeometry(LineString.fromLngLats(line.map { Point.fromLngLat(it.longitude, it.latitude) })))
+        s.getSourceAs<GeoJsonSource>(ROUTE_SOURCE)?.setGeoJson(collection)
     }
 
     LaunchedEffect(style, currentFix) {
@@ -156,8 +222,33 @@ fun TreeMap(
 
     LaunchedEffect(map, cameraCommand) {
         val m = map ?: return@LaunchedEffect
-        val command = cameraCommand ?: return@LaunchedEffect
-        m.animateCamera(CameraUpdateFactory.newLatLngZoom(LatLng(command.latitude, command.longitude), command.zoom), 700)
+        when (val command = cameraCommand ?: return@LaunchedEffect) {
+            is CameraCommand.Center -> {
+                val target = LatLng(command.latitude, command.longitude)
+                val update = command.zoom?.let { CameraUpdateFactory.newLatLngZoom(target, it) } ?: CameraUpdateFactory.newLatLng(target)
+                m.animateCamera(update, command.durationMillis)
+            }
+            is CameraCommand.Fit -> {
+                // A Fit usually comes with UI that changes the bottom overlay (the navigation panel
+                // appears). Let that layout settle so the padding covers what will actually hide the map.
+                delay(FIT_SETTLE_MILLIS)
+                val distinct = command.points.distinct()
+                if (distinct.size < 2) {
+                    distinct.firstOrNull()?.let { m.animateCamera(CameraUpdateFactory.newLatLngZoom(LatLng(it.latitude, it.longitude), command.maxZoom), 700) }
+                } else {
+                    val bounds = LatLngBounds.Builder().includes(distinct.map { LatLng(it.latitude, it.longitude) }).build()
+                    val padding = with(density) {
+                        val side = 48.dp.roundToPx()
+                        intArrayOf(side, (latestTopInset + 24.dp).roundToPx(), side, (latestFitBottomInset + 24.dp).roundToPx())
+                    }
+                    val fitted = m.getCameraForLatLngBounds(bounds, padding)
+                    if (fitted?.target != null) {
+                        val camera = CameraPosition.Builder(fitted).zoom(min(fitted.zoom, command.maxZoom)).bearing(m.cameraPosition.bearing).build()
+                        m.animateCamera(CameraUpdateFactory.newCameraPosition(camera), 800)
+                    }
+                }
+            }
+        }
     }
 
     AndroidView(
@@ -167,8 +258,28 @@ fun TreeMap(
 }
 
 private fun installLayers(style: Style) {
+    style.addSource(GeoJsonSource(ROUTE_SOURCE))
     style.addSource(GeoJsonSource(TREE_SOURCE))
     style.addSource(GeoJsonSource(DEVICE_SOURCE))
+
+    // Field-guidance line: dark casing under a red core, rounded so it reads as a route, not a debug line.
+    style.addLayer(
+        LineLayer(ROUTE_CASING_LAYER, ROUTE_SOURCE).withProperties(
+            PropertyFactory.lineColor(ROUTE_CASING_COLOR),
+            PropertyFactory.lineWidth(9f),
+            PropertyFactory.lineOpacity(0.85f),
+            PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+            PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
+        ),
+    )
+    style.addLayer(
+        LineLayer(ROUTE_LAYER, ROUTE_SOURCE).withProperties(
+            PropertyFactory.lineColor(ROUTE_COLOR),
+            PropertyFactory.lineWidth(5f),
+            PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+            PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
+        ),
+    )
     style.addLayer(
         CircleLayer(DEVICE_HALO_LAYER, DEVICE_SOURCE).withProperties(
             PropertyFactory.circleColor(DEVICE_COLOR),
@@ -179,34 +290,48 @@ private fun installLayers(style: Style) {
             PropertyFactory.circleRadius(12f),
         ),
     )
+    val isDestination = Expression.eq(Expression.get("destination"), Expression.literal(true))
+    val isSelected = Expression.eq(Expression.get("selected"), Expression.literal(true))
+    style.addLayer(
+        CircleLayer(DESTINATION_HALO_LAYER, TREE_SOURCE).withProperties(
+            PropertyFactory.circleRadius(24f),
+            PropertyFactory.circleColor(ROUTE_COLOR),
+            PropertyFactory.circleOpacity(0.18f),
+            PropertyFactory.circleStrokeColor(ROUTE_COLOR),
+            PropertyFactory.circleStrokeWidth(1.5f),
+            PropertyFactory.circleStrokeOpacity(0.7f),
+        ).withFilter(isDestination),
+    )
+    style.addLayer(
+        CircleLayer(TREE_LAYER, TREE_SOURCE).withProperties(
+            PropertyFactory.circleRadius(
+                Expression.switchCase(isDestination, Expression.literal(13f), isSelected, Expression.literal(12f), Expression.literal(9f)),
+            ),
+            // Trees are green; the destination is red. Sync state shows as a thin ring, not a new fill colour.
+            PropertyFactory.circleColor(
+                Expression.switchCase(
+                    isDestination, Expression.color(ROUTE_COLOR),
+                    Expression.eq(Expression.get("sync"), Expression.literal(SyncStatus.SYNCED.name)), Expression.color(GeoColors.Forest.toArgb()),
+                    Expression.color(GeoColors.Moss.toArgb()),
+                ),
+            ),
+            PropertyFactory.circleStrokeColor(
+                Expression.switchCase(
+                    isDestination, Expression.color(android.graphics.Color.WHITE),
+                    isSelected, Expression.color(GeoColors.Clay.toArgb()),
+                    Expression.eq(Expression.get("sync"), Expression.literal(SyncStatus.FAILED.name)), Expression.color(GeoColors.Error.toArgb()),
+                    Expression.eq(Expression.get("sync"), Expression.literal(SyncStatus.SYNCED.name)), Expression.color(android.graphics.Color.WHITE),
+                    Expression.color(GeoColors.GpsAmber.toArgb()),
+                ),
+            ),
+            PropertyFactory.circleStrokeWidth(3f),
+        ),
+    )
     style.addLayer(
         CircleLayer(DEVICE_DOT_LAYER, DEVICE_SOURCE).withProperties(
             PropertyFactory.circleColor(DEVICE_COLOR),
             PropertyFactory.circleRadius(7f),
             PropertyFactory.circleStrokeColor(android.graphics.Color.WHITE),
-            PropertyFactory.circleStrokeWidth(3f),
-        ),
-    )
-    style.addLayer(
-        CircleLayer(TREE_LAYER, TREE_SOURCE).withProperties(
-            PropertyFactory.circleRadius(
-                Expression.switchCase(Expression.eq(Expression.get("selected"), Expression.literal(true)), Expression.literal(13f), Expression.literal(9f)),
-            ),
-            PropertyFactory.circleColor(
-                Expression.match(
-                    Expression.get("sync"),
-                    Expression.color(GeoColors.GpsAmber.toArgb()),
-                    Expression.stop(SyncStatus.SYNCED.name, Expression.color(GeoColors.Forest.toArgb())),
-                    Expression.stop(SyncStatus.FAILED.name, Expression.color(GeoColors.Error.toArgb())),
-                ),
-            ),
-            PropertyFactory.circleStrokeColor(
-                Expression.switchCase(
-                    Expression.eq(Expression.get("selected"), Expression.literal(true)),
-                    Expression.color(GeoColors.Clay.toArgb()),
-                    Expression.color(android.graphics.Color.WHITE),
-                ),
-            ),
             PropertyFactory.circleStrokeWidth(3f),
         ),
     )
@@ -224,31 +349,16 @@ private fun updateAccuracyHalo(map: MapLibreMap, style: Style, fix: GpsFix?, den
 
 private fun distance(a: PointF, b: PointF): Float = hypot(a.x - b.x, a.y - b.y)
 
+private const val FIT_SETTLE_MILLIS = 250L
 private const val TREE_SOURCE = "geo-trees"
 private const val TREE_LAYER = "geo-trees-circles"
+private const val DESTINATION_HALO_LAYER = "geo-destination-halo"
 private const val DEVICE_SOURCE = "geo-device"
 private const val DEVICE_HALO_LAYER = "geo-device-halo"
 private const val DEVICE_DOT_LAYER = "geo-device-dot"
+private const val ROUTE_SOURCE = "geo-route"
+private const val ROUTE_CASING_LAYER = "geo-route-casing"
+private const val ROUTE_LAYER = "geo-route-line"
 private val DEVICE_COLOR = android.graphics.Color.rgb(0x2B, 0x6C, 0xB0)
-
-/** Initial view before any GPS fix: the Philippines. Not a tree location. */
-private val DEFAULT_CAMERA = MapCamera(12.8797, 121.7740, 5.0)
-
-private const val STYLE_JSON = """
-{
-  "version": 8,
-  "sources": {
-    "osm": {
-      "type": "raster",
-      "tiles": ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
-      "tileSize": 256,
-      "maxzoom": 19,
-      "attribution": "© OpenStreetMap contributors"
-    }
-  },
-  "layers": [
-    { "id": "background", "type": "background", "paint": { "background-color": "#EDE6D6" } },
-    { "id": "osm", "type": "raster", "source": "osm" }
-  ]
-}
-"""
+private val ROUTE_COLOR = android.graphics.Color.rgb(0xD6, 0x2F, 0x26)
+private val ROUTE_CASING_COLOR = android.graphics.Color.rgb(0x6E, 0x14, 0x10)

@@ -1,0 +1,13 @@
+{
+  "id": "psau_magalang",
+  "name": "PSAU / Magalang",
+  "description": "Pampanga State Agricultural University campus and fields, Magalang poblacion, and the roads between them, with a buffer.",
+  "min_latitude": 15.1980,
+  "max_latitude": 15.2400,
+  "min_longitude": 120.6480,
+  "max_longitude": 120.7150,
+  "center_latitude": 15.21851,
+  "center_longitude": 120.69557,
+  "min_zoom": 13,
+  "max_zoom": 17
+}

@@ -34,13 +34,14 @@ import com.geotree.app.core.network.ApiProvider
 import com.geotree.app.core.session.SessionStore
 import com.geotree.app.core.sync.SyncScheduler
 import com.geotree.app.data.repository.TreeRepository
+import com.geotree.app.feature.locator.map.OfflineMapInstaller
 import com.geotree.app.geoViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-enum class SplashDestination { Login, Locator }
+enum class SplashDestination { Login, Main }
 
 data class SplashUiState(
     val step: String = "Starting…",
@@ -53,6 +54,7 @@ class SplashViewModel(
     private val sessionStore: SessionStore,
     private val apiProvider: ApiProvider,
     private val syncScheduler: SyncScheduler,
+    private val offlineMap: OfflineMapInstaller,
 ) : ViewModel() {
     private val _state = MutableStateFlow(SplashUiState())
     val state: StateFlow<SplashUiState> = _state.asStateFlow()
@@ -67,6 +69,10 @@ class SplashViewModel(
             try {
                 _state.value = SplashUiState(step = "Opening field records…")
                 treeRepository.treeCount()
+                // First launch copies the bundled field map once; later launches only check metadata.
+                // A problem here never blocks field work: the map reports it, trees and GPS still work.
+                _state.value = SplashUiState(step = "Preparing offline field map…")
+                offlineMap.ensureInstalled()
                 _state.value = SplashUiState(step = "Restoring session…")
                 val session = sessionStore.current()
                 _state.value = SplashUiState(step = "Loading server settings…")
@@ -78,7 +84,7 @@ class SplashViewModel(
                 }
                 _state.value = SplashUiState(
                     step = "Ready",
-                    destination = if (session != null) SplashDestination.Locator else SplashDestination.Login,
+                    destination = if (session != null) SplashDestination.Main else SplashDestination.Login,
                 )
             } catch (e: Exception) {
                 _state.value = SplashUiState(error = "Could not open local records: ${e.message}")
@@ -90,7 +96,7 @@ class SplashViewModel(
 @Composable
 fun SplashScreen(onReady: (SplashDestination) -> Unit) {
     val viewModel = geoViewModel { c, _ ->
-        SplashViewModel(c.treeRepository, c.sessionStore, c.apiProvider, c.syncScheduler)
+        SplashViewModel(c.treeRepository, c.sessionStore, c.apiProvider, c.syncScheduler, c.offlineMapInstaller)
     }
     val state by viewModel.state.collectAsStateWithLifecycle()
 

@@ -38,7 +38,13 @@ class TreeSyncWorker(context: Context, params: WorkerParameters) : CoroutineWork
     }
 }
 
-class SyncScheduler(context: Context) {
+/** Requests a background sync. Implemented by [SyncScheduler]; lets ViewModels be tested without WorkManager. */
+fun interface SyncTrigger {
+    /** [replace] restarts immediately (manual "Sync now"). */
+    fun requestSync(replace: Boolean)
+}
+
+class SyncScheduler(context: Context) : SyncTrigger {
     private val workManager = WorkManager.getInstance(context)
 
     private val constraints = Constraints.Builder()
@@ -46,7 +52,7 @@ class SyncScheduler(context: Context) {
         .build()
 
     /** Enqueue one sync. [replace] restarts immediately (manual "Sync now"). */
-    fun requestSync(replace: Boolean = false) {
+    override fun requestSync(replace: Boolean) {
         val request = OneTimeWorkRequestBuilder<TreeSyncWorker>()
             .setConstraints(constraints)
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 15, TimeUnit.SECONDS)
@@ -72,6 +78,8 @@ class SyncScheduler(context: Context) {
         workManager.cancelUniqueWork(ONE_TIME_WORK)
         workManager.cancelUniqueWork(PERIODIC_WORK)
     }
+
+    fun requestSync() = requestSync(replace = false)
 
     /** True while a one-time sync is queued waiting for network or backoff. */
     fun observeQueued(): Flow<Boolean> = workManager.getWorkInfosForUniqueWorkFlow(ONE_TIME_WORK)

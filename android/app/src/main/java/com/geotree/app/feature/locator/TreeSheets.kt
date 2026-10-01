@@ -17,6 +17,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -31,11 +32,19 @@ import com.geotree.app.core.design.StatusPill
 import com.geotree.app.core.design.TreeImage
 import com.geotree.app.core.design.label
 import com.geotree.app.core.design.tone
+import com.geotree.app.feature.navigation.NavigationFormat
 import com.geotree.app.feature.tagtree.CoordinateRow
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun TreeSummarySheet(tree: TreeEntity, onDismiss: () -> Unit, onViewDetails: () -> Unit) {
+fun TreeSummarySheet(
+    tree: TreeEntity,
+    distanceMeters: Double?,
+    isDestination: Boolean,
+    onDismiss: () -> Unit,
+    onViewDetails: () -> Unit,
+    onNavigate: () -> Unit,
+) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
             verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -54,7 +63,18 @@ fun TreeSummarySheet(tree: TreeEntity, onDismiss: () -> Unit, onViewDetails: () 
             CoordinateRow("Longitude", Formatters.longitude(tree.longitude), tag = "sheet_longitude")
             CoordinateRow("Accuracy", Formatters.accuracy(tree.accuracyMeters), tag = "sheet_accuracy")
             CoordinateRow("Captured", Formatters.dateTime(tree.locationCapturedAt), tag = "sheet_time", monospace = false)
-            Button(onClick = onViewDetails, modifier = Modifier.fillMaxWidth().testTag("view_details")) { Text("View Details") }
+            CoordinateRow(
+                "Distance",
+                distanceMeters?.let { "${NavigationFormat.distance(it)} from you" } ?: "Waiting for GPS",
+                tag = "sheet_distance",
+                monospace = false,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedButton(onClick = onViewDetails, modifier = Modifier.weight(1f).testTag("view_details")) { Text("View Details") }
+                Button(onClick = onNavigate, enabled = !isDestination, modifier = Modifier.weight(1f).testTag("navigate_to_tree")) {
+                    Text(if (isDestination) "Navigating" else "Navigate to Tree")
+                }
+            }
         }
     }
 }
