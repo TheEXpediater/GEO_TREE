@@ -182,6 +182,30 @@ Do this on a real Android phone. The emulator cannot test real walking speed, re
 - [ ] Turn networking back on with the backend running (`run.bat`).
 - [ ] Check that the pending record becomes **Synced**.
 
+### Physical phone heading test (required; not done on the emulator)
+
+1. Open **Map**.
+2. Select a tree.
+3. Start **Field Guidance** (Navigate to Tree).
+4. Hold the phone flat or naturally in front of you.
+5. Rotate the phone clockwise.
+6. Check that the green live arrow on the panel compass rotates with it, and that the blue chevron on the map turns too.
+7. Rotate toward the grey target line.
+8. Check that the live arrow aligns with it and turns success green.
+9. Check that the text approaches "Facing the tree" (relative angle near 0°).
+10. Walk toward the tree.
+11. Check that the distance decreases.
+12. Check that the current-location chevron keeps updating.
+13. Tap ▼ to **minimize** guidance.
+14. Check that the bar keeps updating distance and ETA.
+15. Tap the bar to **expand**.
+16. Check that the same tree, distance and state are shown.
+17. Tap the orientation control for **Heading Up**: the map should turn with you.
+18. Drag the map: it should return to free mode.
+19. Tap **My Location** to follow again.
+
+If the arrow drifts or the panel says "compass needs calibration", move the phone in a figure-8 and keep it away from vehicles, metal and other phones.
+
 ### Physical phone test (online, with sync)
 
 1. Start Docker Desktop.
@@ -244,7 +268,7 @@ cd backend; .\.venv\Scripts\python.exe -m pytest -q; cd ..
 ```
 
 - **Backend (29 tests, unchanged in Give 2):** health, dev-admin seed idempotency, login success and failure, `/auth/me`, tree create, update, idempotent repeat sync, stale-update ignore, duplicate Tree Code → 409, invalid latitude/longitude/accuracy → 422, change-feed version filtering and paging, image upload/replace/validation/auth/path traversal.
-- **Android (129 tests):** 0.3.1 adds stale-speed expiry, repeated-spike rejection, gap reset, moving/stationary hysteresis, NaN/negative/infinite speed, measured-vs-walking-estimate display, "no fix yet" timing, and the Tag Tree "which field needs attention" order. The offline-map follow-up adds region validation and inside/outside checks, a cross-check that the Kotlin region, `tools/offline_map/region.json` and the bundled package metadata (size and SHA-256) agree, package extraction (first launch copies once, later launches do not, new version or damaged file re-copies, checksum mismatch fails cleanly, missing package), map-source setting default and legacy value, offline/online/background basemap resolution (never silently online), coverage state, default PSAU camera and GPS camera, first-fix re-centring and tree zoom limits. Give 2 adds field-navigation math (haversine distance, bearing, 8-point cardinal mapping, m/s → km/h, ETA, zero/negative/NaN speed, distance/duration formatting, geodesic path), `DirectRouteProvider` geometry, speed filtering (unavailable, stationary, smoothing, spike rejection, low-confidence readings), `FieldNavigationController` (start without a fix, distance/bearing updates, measured-speed ETA, labelled walking estimate, arrival once per session, stop, destination change, stale-session and stale-fix protection), Map ViewModel (marker selection and zoom, open/My Location zoom, follow mode cancelled by gestures, navigation GPS profile switch, single stream, no location-update leak, selected-tree distance, permission handling), Dashboard (Room counts, recent ordering, backend/GPS status mapping, Sync Now, re-check after a sync), basemap selection and backend status mapping, and last-successful-sync recording. Give 1 coverage: GPS accuracy classification, Tag Tree validation (blank/invalid code, invalid coordinates, negative accuracy, low accuracy), duplicate local Tree Code, local-first save, PENDING → SYNCING → SYNCED, FAILED retry, image-upload retry, conflict handling, remote-change upsert and cursor, login loading/success/failure/validation/duplicate submit, debug credential defaults, server URL normalization.
+- **Android (163 tests):** 0.3.2 adds session routing (none → Login, valid → Dashboard with no backend call, expired → local Dashboard with sync not scheduled, restart persistence, explicit logout), expired-session sync block with no server request, re-login keeping Room data and resuming sync, sign-in banner and chip states, angle normalisation and the 359°/0° wrap, circular smoothing, heading from the rotation matrix (flat and upright), declination (true vs magnetic), relative bearing and the 8 relative directions, alignment tolerance, compass registration only while needed (no sensor leak), FREE / FOLLOW_LOCATION / HEADING_UP transitions, missing-compass handling, panel collapse with guidance continuing, and arrival while collapsed. 0.3.1 adds stale-speed expiry, repeated-spike rejection, gap reset, moving/stationary hysteresis, NaN/negative/infinite speed, measured-vs-walking-estimate display, "no fix yet" timing, and the Tag Tree "which field needs attention" order. The offline-map follow-up adds region validation and inside/outside checks, a cross-check that the Kotlin region, `tools/offline_map/region.json` and the bundled package metadata (size and SHA-256) agree, package extraction (first launch copies once, later launches do not, new version or damaged file re-copies, checksum mismatch fails cleanly, missing package), map-source setting default and legacy value, offline/online/background basemap resolution (never silently online), coverage state, default PSAU camera and GPS camera, first-fix re-centring and tree zoom limits. Give 2 adds field-navigation math (haversine distance, bearing, 8-point cardinal mapping, m/s → km/h, ETA, zero/negative/NaN speed, distance/duration formatting, geodesic path), `DirectRouteProvider` geometry, speed filtering (unavailable, stationary, smoothing, spike rejection, low-confidence readings), `FieldNavigationController` (start without a fix, distance/bearing updates, measured-speed ETA, labelled walking estimate, arrival once per session, stop, destination change, stale-session and stale-fix protection), Map ViewModel (marker selection and zoom, open/My Location zoom, follow mode cancelled by gestures, navigation GPS profile switch, single stream, no location-update leak, selected-tree distance, permission handling), Dashboard (Room counts, recent ordering, backend/GPS status mapping, Sync Now, re-check after a sync), basemap selection and backend status mapping, and last-successful-sync recording. Give 1 coverage: GPS accuracy classification, Tag Tree validation (blank/invalid code, invalid coordinates, negative accuracy, low accuracy), duplicate local Tree Code, local-first save, PENDING → SYNCING → SYNCED, FAILED retry, image-upload retry, conflict handling, remote-change upsert and cursor, login loading/success/failure/validation/duplicate submit, debug credential defaults, server URL normalization.
 
 ## 5. Simulating GPS on the emulator
 
@@ -271,6 +295,19 @@ GPS quality thresholds (`core/location/GpsAccuracyPolicy.kt`): ≤ 5 m **Good**,
 ## 6. Offline behaviour
 
 After one successful sign-in, the session is stored in DataStore and the app is a complete offline field tool.
+
+**Session (0.3.2).** You sign in once per 7-day session.
+- **Storage:** `SessionStore` (DataStore) keeps the access token, email and server-issued expiry. The backend's lifetime is `jwt_expire_minutes = 7 days` in `backend/app/config.py`.
+- **Startup:** routing reads only the stored session; the server is never contacted.
+  - No session → Login.
+  - Valid session → Dashboard. This holds after closing, force-stopping or rebooting, and with Wi-Fi, mobile data and the backend all off.
+  - Expired session → still the Dashboard. Trees, photos, offline map, GPS, Tag Tree and Field Guidance keep working.
+- **Expired session:** sync pauses locally, with no request sent using the expired token. The Dashboard shows a non-blocking "Sign in to resume synchronization" banner, and the sync chips read "Sign in to sync".
+  - **Sign In to Sync** (Dashboard or Settings) opens Login in re-sign-in mode, with **Continue without syncing** available.
+  - Signing in replaces only the token, keeps all Room data, returns you to where you were, and resumes WorkManager sync.
+  - A token the server rejects (401) triggers the same banner.
+- **Sign Out** in Settings is the only way back to the Login screen. It keeps trees on the device.
+- There are no refresh tokens in this prototype.
 
 | Works offline (no internet, no backend) | Requires the backend (FastAPI + MongoDB) |
 |---|---|
@@ -340,7 +377,48 @@ All thresholds live in `NavigationConfig` (`feature/navigation/NavigationMath.kt
 
 **GPS use.** Tagging still requests one fresh fix. The Map runs one continuous `requestLocationUpdates` stream at a time: about every 4 s for the locator, and every 2.5 s at high accuracy during guidance. The stream stops when you leave the Map tab, when the app goes to the background, and when the screen's ViewModel is cleared. Guidance pauses in the background (there is no foreground service). A fix older than 15 s is never used to start a session. On the emulator, `dumpsys location` showed a 2.5 s request while navigating, 4 s after Stop, and no request after leaving the Map tab.
 
-**Camera.** With GPS, the map opens on you at zoom 15.5. Without GPS it opens on the PSAU deployment area at zoom 15 (never a country or world view). My Location goes to 17. Selecting a tree goes to 17.5, or keeps your zoom up to 18. Starting guidance frames you and the tree (max zoom 17.5). In offline mode you cannot zoom out past 12. Values live in `MapZoom` (`feature/locator/LocatorViewModel.kt`). **Follow Location** (arrow button) keeps the map centred on you at your current zoom until you touch the map. The camera is never locked.
+**Map follow modes** (0.3.2)
+
+| Mode | How you get there | Behaviour |
+|---|---|---|
+| FREE | Any pan or rotate gesture, or selecting a tree | You control the map. |
+| FOLLOW_LOCATION | **My Location** button | Centres on you at zoom 17, north up, and follows each GPS fix at your zoom. |
+| HEADING_UP | Tap the top-right **orientation control** or the compass in the guidance panel | Follows you and rotates the map with the phone compass. Tap again for North Up. |
+
+Pinch-zoom keeps following. Panning or rotating returns to FREE. Without a compass sensor, Heading Up is refused with a message.
+
+**Map controls.** There is exactly one of each, placed from measured sizes rather than fixed offsets:
+- **Top right, under the top bar:** the GEO Tree orientation control. MapLibre's own compass is disabled so there is no duplicate.
+- **Right side, above Tag Tree:** My Location (the only centring action; highlighted while following).
+- **Bottom:** the guidance panel, expanded or collapsed.
+- **Bottom left, above whatever occupies it:** MapLibre's logo and ⓘ attribution.
+
+On short screens the expanded panel is capped to the space left and scrolls inside, so it never pushes the buttons into the top controls. Checked on the Medium Phone (1080×2400) and on a 720×1280 / 320 dpi display override.
+
+**Camera.** With GPS, the map opens on you at zoom 15.5. Without GPS it opens on the PSAU deployment area at zoom 15 (never a country or world view). My Location goes to 17. Selecting a tree goes to 17.5, or keeps your zoom up to 18. Starting guidance frames you and the tree (max zoom 17.5). In offline mode you cannot zoom out past 12. Values live in `MapZoom` (`feature/locator/LocatorViewModel.kt`). The camera is never locked.
+
+**Guidance panel (minimize / expand).** The **expanded** panel shows:
+- Tree Code, distance, destination direction ("NE · 58°") and the relative turn ("Turn 34° right" / "Facing the tree")
+- the navigation compass
+- speed and ETA, or the walking estimate
+- GPS accuracy
+- **Stop Guidance**
+
+The ▼ button or a swipe down on the handle **collapses** it to one bar: mini compass · Tree Code · distance · ETA · ▲. Tap the bar or swipe up to expand. Both views come from the same navigation session, so GPS, distance, ETA and arrival keep updating while collapsed.
+
+**Phone heading and the navigation compass.**
+- **Sensor:** `core/orientation/DeviceHeadingProvider.kt` reads `Sensor.TYPE_ROTATION_VECTOR` via `SensorManager`, falling back to accelerometer + magnetometer. It works offline.
+- **Lifecycle:** sensors are registered only while guidance or Heading Up needs them *and* the Map is on screen. Leaving the Map, backgrounding the app, or stopping guidance unregisters them (unit-tested with a fake sensor).
+- **Hold position:** heading is taken from the phone's top edge when it is held flat, and from the back camera's direction when it is held upright.
+- **True north:** the rotation vector reports magnetic north. Android's `GeomagneticField` (World Magnetic Model, offline) gives the declination at your GPS position, and true = magnetic + declination. Before the first GPS fix the heading is shown as magnetic, never silently treated as true.
+- **Smoothing:** light circular smoothing (weight 0.3 per reading). 359° and 1° average to 0°, not 180°.
+- **Calibration:** low or unreliable sensor accuracy shows "compass needs calibration: move the phone in a figure-8".
+
+The compass in the panel is north-up:
+- **Grey:** the target. A centre line marks the exact bearing to the tree, and two faint side lines mark ±12° (`NavigationConfig.alignmentToleranceDegrees`). These are orientation aids, not roads.
+- **Forest green:** the live arrow, where the phone is facing. It turns success green when inside the ±12° corridor.
+- **Relative direction:** normalize(target − heading) as a signed turn, labelled ahead, ahead-right, right, behind-right, behind, behind-left, left or ahead-left.
+- **Location marker:** while a heading is available it is a blue chevron pointing where the phone faces; otherwise it is the usual dot. GPS course is not used as a substitute, so a stationary user is never given a fake orientation.
 
 **Routing extension point.** The UI depends only on `RouteProvider` → `RouteResult(geometry, distanceMeters, estimatedDurationSeconds, routeType)`. `DirectRouteProvider` is the only implementation. A future `OfflineRoadRouteProvider` or `ServerRoadRouteProvider` plugs in through `AppContainer.routeProvider` without touching the Dashboard, Map or navigation panel.
 
@@ -422,7 +500,10 @@ Errors are structured as `{"error": {"code": "...", "message": "...", "details":
 - **Guidance is a direct line**, not a road or path route. It can point across buildings, fences and water.
 - **Emulator speed:** `adb emu geo fix` reports a speed of 0, and this emulator image ignored `geo nmea` sentences. The measured-speed and ETA paths are covered by unit tests only and need a walk test on a real phone. Emulator accuracy (5.0 m) is synthetic.
 - **Keyboard on the emulator:** the Medium_Phone AVD has a hardware keyboard, so Gboard shows only its compact toolbar or a *floating* keyboard; floating keyboards never resize apps. The Save bar was verified to rise by the keyboard inset the app receives and to stay tappable with the keyboard open, but a full docked keyboard needs a check on a real phone.
-- Guidance pauses when the Map tab is not visible or the app is in the background (no foreground location service).
+- Guidance pauses when the Map tab is not visible or the app is in the background (no foreground location service). The compass is off then too.
+- **Compass not validated on a real phone yet.** On the emulator the heading pipeline was driven with virtual accelerometer/magnetometer values (relative turn, alignment, chevron and Heading Up all responded). That proves the code path, not real compass behaviour, magnetic interference or calibration. Run the physical heading test below.
+- In Heading Up the raster basemap rotates, so its drawn labels rotate too.
+- Session expiry uses the phone's clock; a badly wrong clock can pause sync early or late (the server still enforces the real expiry).
 - **The emulator camera shows a virtual room**, not a tree. Capture, preview, file persistence and upload are verified, but real photo quality needs a physical device.
 - Emulator GPS accuracy is synthetic. Field accuracy has to be measured on real devices.
 - One user role and development authentication only. JWTs last 7 days. After expiry, sync pauses ("Sign in to sync") while local work continues.

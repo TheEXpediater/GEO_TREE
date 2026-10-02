@@ -5,6 +5,15 @@ import androidx.lifecycle.viewModelScope
 import com.geotree.app.core.database.TreeEntity
 import com.geotree.app.core.design.PillTone
 import com.geotree.app.core.location.GpsFix
+import com.geotree.app.core.orientation.DeclinationSource
+import com.geotree.app.core.session.Session
+import com.geotree.app.core.session.SessionState
+import com.geotree.app.core.session.sessionState
+import com.geotree.app.core.sync.authRequired
+import com.geotree.app.core.orientation.HeadingProcessor
+import com.geotree.app.core.orientation.HeadingSource
+import com.geotree.app.core.orientation.HeadingState
+import com.geotree.app.core.orientation.degreesOrNull
 import com.geotree.app.core.location.LocationPermission
 import com.geotree.app.core.location.LocationSource
 import com.geotree.app.core.location.LocationUpdateProfile
@@ -35,6 +44,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -42,11 +52,15 @@ enum class TrackingState { PERMISSION_REQUIRED, LOCATION_DISABLED, SEARCHING, TR
 
 data class SyncIndicator(val label: String, val tone: PillTone)
 
-/** Pure mapping from Room counts + worker activity to the locator's sync chip. */
-fun syncIndicator(counts: SyncCounts, activity: SyncActivity): SyncIndicator {
+/**
+ * Pure mapping from Room counts + worker activity to the sync chip. [authRequired] is true while
+ * the stored session is expired: field work continues, sync waits for a new sign-in.
+ */
+fun syncIndicator(counts: SyncCounts, activity: SyncActivity, authRequired: Boolean = false): SyncIndicator {
     val waiting = counts.pending + counts.failed
     return when {
         activity.running || counts.syncing > 0 -> SyncIndicator("Syncing…", PillTone.Neutral)
+        authRequired -> SyncIndicator("Sign in to sync", PillTone.Warning)
         waiting > 0 && activity.lastOutcome == SyncOutcome.AuthExpired -> SyncIndicator("Sign in to sync", PillTone.Error)
         waiting > 0 && activity.lastOutcome is SyncOutcome.BackendUnavailable -> SyncIndicator("Offline · $waiting pending", PillTone.Warning)
         counts.failed > 0 -> SyncIndicator("${counts.failed} failed", PillTone.Error)
@@ -75,6 +89,20 @@ object MapZoom {
     val NO_LOCATION = MapCamera(OfflineMapRegion.DEFAULT_CENTER_LATITUDE, OfflineMapRegion.DEFAULT_CENTER_LONGITUDE, AREA_OVERVIEW)
 }
 
+/**
+ * How the camera relates to the user.
+ * - FREE: the user controls the map (any pan/zoom/rotate gesture returns here).
+ * - FOLLOW_LOCATION: the map follows GPS, north up (My Location button).
+ * - HEADING_UP: the map follows GPS and rotates with the phone compass (compass control).
+ */
+enum class MapFollowMode { FREE, FOLLOW_LOCATION, HEADING_UP }
+
+/** Camera target while in [MapFollowMode.HEADING_UP]: the user's position, map bearing = phone heading. */
+data class HeadingUpCamera(val latitude: Double, val longitude: Double, val bearing: Double)
+
+/** A short one-off message for the map's snackbar; [nonce] makes repeats distinct. */
+data class MapMessage(val text: String, val nonce: Long)
+
 class LocatorViewModel(
     private val repository: TreeRepository,
     private val locationSource: LocationSource,
@@ -82,13 +110,20 @@ class LocatorViewModel(
     syncTracker: SyncStatusTracker,
     private val navigation: FieldNavigationController,
     basemapSource: Flow<Basemap>,
+    private val headingSource: HeadingSource = HeadingSource.None,
+    private val declination: DeclinationSource = DeclinationSource.None,
+    session: Flow<Session?> = flowOf(null),
+    private val clock: () -> Long = System::currentTimeMillis,
 ) : ViewModel() {
 
     /** Markers are driven only by Room. */
     val trees: StateFlow<List<TreeEntity>> = repository.observeTrees()
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
-    val syncIndicator: StateFlow<SyncIndicator> = combine(repository.observeSyncCounts(), syncTracker.state, ::syncIndicator)
+    val syncIndicator: StateFlow<SyncIndicator> = combine(repository.observeSyncCounts(), syncTracker.state, session) { counts, activity, s ->
+        val state = if (s == null) SessionState.NONE else sessionState(s, clock())
+        syncIndicator(counts, activity, authRequired(state, activity))
+    }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SyncIndicator("…", PillTone.Neutral))
 
     val basemap: StateFlow<Basemap> = basemapSource
@@ -110,9 +145,26 @@ class LocatorViewModel(
     private val _cameraCommand = MutableStateFlow<CameraCommand?>(null)
     val cameraCommand: StateFlow<CameraCommand?> = _cameraCommand.asStateFlow()
 
-    /** Explicit Follow Location mode. Any map gesture turns it off; nothing turns it on by itself. */
-    private val _following = MutableStateFlow(false)
-    val following: StateFlow<Boolean> = _following.asStateFlow()
+    /** Explicit follow mode. Any map gesture returns to FREE; nothing turns following on by itself. */
+    private val _mapMode = MutableStateFlow(MapFollowMode.FREE)
+    val mapMode: StateFlow<MapFollowMode> = _mapMode.asStateFlow()
+
+    /** Phone compass heading; measured only while guidance or Heading Up needs it and the map is visible. */
+    private val _heading = MutableStateFlow<HeadingState>(if (headingSource.isSupported) HeadingState.Inactive else HeadingState.Unsupported)
+    val heading: StateFlow<HeadingState> = _heading.asStateFlow()
+
+    /** Guidance panel size. One navigation session drives both; collapsing changes only the UI. */
+    private val _panelExpanded = MutableStateFlow(true)
+    val panelExpanded: StateFlow<Boolean> = _panelExpanded.asStateFlow()
+
+    private val _message = MutableStateFlow<MapMessage?>(null)
+    val message: StateFlow<MapMessage?> = _message.asStateFlow()
+
+    /** Non-null only in Heading Up with both a GPS fix and a compass heading. */
+    val headingUpCamera: StateFlow<HeadingUpCamera?> = combine(_mapMode, _heading, _currentFix) { mode, heading, fix ->
+        val degrees = heading.degreesOrNull
+        if (mode == MapFollowMode.HEADING_UP && degrees != null && fix != null) HeadingUpCamera(fix.latitude, fix.longitude, degrees) else null
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     val navigationState: StateFlow<FieldNavigationState?> = navigation.state
 
@@ -132,7 +184,11 @@ class LocatorViewModel(
         private set
 
     private var trackingJob: Job? = null
+    private var headingJob: Job? = null
+    private val headingProcessor = HeadingProcessor()
+    private var declinationCache: Pair<String, Double?>? = null
     private var commandNonce = 0L
+    private var messageNonce = 0L
     private var centeredOnFirstFix = false
     /** The user or a command has moved the camera; the first-fix centring must not override that. */
     private var cameraMoved = false
@@ -166,6 +222,37 @@ class LocatorViewModel(
                 }
             }
         }
+        updateHeadingSubscription()
+    }
+
+    /**
+     * Compass sensors run only while the Map is visible AND guidance or Heading Up needs them.
+     * Cancelling the collector unregisters the sensor listener, so leaving the Map never leaks it.
+     */
+    private fun updateHeadingSubscription() {
+        val wanted = trackingJob?.isActive == true && headingSource.isSupported &&
+            (navigation.isActive || _mapMode.value == MapFollowMode.HEADING_UP)
+        if (wanted) {
+            if (headingJob?.isActive == true) return
+            headingProcessor.reset()
+            headingJob = viewModelScope.launch {
+                headingSource.readings().collect { raw -> _heading.value = headingProcessor.process(raw, currentDeclination()) }
+            }
+        } else {
+            headingJob?.cancel()
+            headingJob = null
+            _heading.value = if (headingSource.isSupported) HeadingState.Inactive else HeadingState.Unsupported
+        }
+    }
+
+    /** Magnetic → true north at the user's GPS position (cached per ~5 km cell and day). Null without a fix. */
+    private fun currentDeclination(): Double? {
+        val fix = _currentFix.value ?: return null
+        val key = "${(fix.latitude * 20).toInt()}:${(fix.longitude * 20).toInt()}:${fix.capturedAt / 86_400_000L}"
+        declinationCache?.let { (k, v) -> if (k == key) return v }
+        val value = declination.declinationDegrees(fix.latitude, fix.longitude, fix.altitudeMeters ?: 0.0, fix.capturedAt)
+        declinationCache = key to value
+        return value
     }
 
     /**
@@ -175,6 +262,7 @@ class LocatorViewModel(
     fun stopTracking() {
         trackingJob?.cancel()
         trackingJob = null
+        updateHeadingSubscription()
         _activeProfile.value = null
         _currentFix.value = null
         if (_tracking.value == TrackingState.TRACKING) _tracking.value = TrackingState.SEARCHING
@@ -190,7 +278,9 @@ class LocatorViewModel(
                 centeredOnFirstFix = true
                 center(fix.latitude, fix.longitude, MapZoom.MY_LOCATION)
             }
-            _following.value -> center(fix.latitude, fix.longitude, zoom = null, durationMillis = 500)
+            _mapMode.value == MapFollowMode.FOLLOW_LOCATION -> center(fix.latitude, fix.longitude, zoom = null, durationMillis = 500)
+            // HEADING_UP: the camera follows through [headingUpCamera]; no command per fix.
+            _mapMode.value == MapFollowMode.HEADING_UP -> Unit
             // Centre once on the first fresh fix, unless the user or a command already moved the map.
             // (The opening camera may come from a stale cached location, so it is not enough on its own.)
             !centeredOnFirstFix && !cameraMoved -> {
@@ -200,36 +290,56 @@ class LocatorViewModel(
         }
     }
 
+    /**
+     * My Location: centre at street/field zoom and follow (north up). In Heading Up it re-centres
+     * and stays in Heading Up.
+     */
     fun centerOnCurrentLocation() {
+        if (_mapMode.value != MapFollowMode.HEADING_UP) setMode(MapFollowMode.FOLLOW_LOCATION)
         val fix = _currentFix.value
         if (fix == null) {
             centerOnNextFix = true
             startTracking()
+        } else if (_mapMode.value == MapFollowMode.FOLLOW_LOCATION) {
+            center(fix.latitude, fix.longitude, MapZoom.MY_LOCATION, bearing = 0.0)
         } else {
             center(fix.latitude, fix.longitude, MapZoom.MY_LOCATION)
         }
     }
 
-    fun toggleFollowLocation() = setFollowing(!_following.value)
-
-    fun setFollowing(follow: Boolean) {
-        _following.value = follow
-        navigation.setFollowing(follow)
-        if (!follow) return
-        val fix = _currentFix.value
-        if (fix == null) {
-            startTracking()
-        } else {
-            val zoom = lastCamera?.zoom?.takeIf { it >= MapZoom.OVERVIEW } ?: MapZoom.MY_LOCATION
-            center(fix.latitude, fix.longitude, zoom)
+    /** Compass control: Heading Up ⇄ North Up (following). Heading Up needs a phone compass. */
+    fun toggleHeadingUp() {
+        if (_mapMode.value == MapFollowMode.HEADING_UP) {
+            setMode(MapFollowMode.FOLLOW_LOCATION)
+            _currentFix.value?.let { center(it.latitude, it.longitude, zoom = null, bearing = 0.0, durationMillis = 400) }
+            return
         }
+        if (!headingSource.isSupported) {
+            _message.value = MapMessage("This phone has no compass sensor, so Heading Up is not available.", ++messageNonce)
+            return
+        }
+        cameraMoved = true
+        setMode(MapFollowMode.HEADING_UP)
+        if (_currentFix.value == null) startTracking()
     }
 
-    /** A finger moved the map: stop following so the camera never fights the user. */
+    private fun setMode(mode: MapFollowMode) {
+        _mapMode.value = mode
+        navigation.setFollowing(mode != MapFollowMode.FREE)
+        updateHeadingSubscription()
+    }
+
+    /** A finger moved, zoomed or rotated the map: back to FREE so the camera never fights the user. */
     fun onUserGesture() {
         cameraMoved = true
-        if (_following.value) setFollowing(false)
+        if (_mapMode.value != MapFollowMode.FREE) setMode(MapFollowMode.FREE)
     }
+
+    fun setPanelExpanded(expanded: Boolean) {
+        _panelExpanded.value = expanded
+    }
+
+    fun togglePanel() = setPanelExpanded(!_panelExpanded.value)
 
     /** Marker tap: select and bring the tree to field-level zoom. */
     fun selectTree(id: String?) {
@@ -240,7 +350,7 @@ class LocatorViewModel(
     fun focusTree(id: String) {
         val tree = trees.value.firstOrNull { it.id == id } ?: return
         _selectedTreeId.value = id
-        if (_following.value) setFollowing(false)
+        if (_mapMode.value != MapFollowMode.FREE) setMode(MapFollowMode.FREE)
         val zoom = maxOf(lastCamera?.zoom ?: 0.0, MapZoom.TREE).coerceAtMost(MapZoom.TREE_MAX)
         center(tree.latitude, tree.longitude, zoom)
     }
@@ -254,13 +364,14 @@ class LocatorViewModel(
         val tree = trees.value.firstOrNull { it.id == treeId } ?: return
         val destination = NavigationDestination(tree.id, tree.treeCode, tree.latitude, tree.longitude)
         viewModelScope.launch {
-            navigation.start(destination, _currentFix.value, following = _following.value)
+            navigation.start(destination, _currentFix.value, following = _mapMode.value != MapFollowMode.FREE)
             _selectedTreeId.value = null
-            startTracking() // restarts the stream with LocationUpdateProfile.NAVIGATION
+            _panelExpanded.value = true
+            startTracking() // restarts the stream with LocationUpdateProfile.NAVIGATION (and the compass)
             val fix = _currentFix.value
             if (fix == null) {
-                center(tree.latitude, tree.longitude, MapZoom.TREE)
-            } else if (!_following.value) {
+                if (_mapMode.value == MapFollowMode.FREE) center(tree.latitude, tree.longitude, MapZoom.TREE)
+            } else if (_mapMode.value == MapFollowMode.FREE) {
                 cameraMoved = true
                 _cameraCommand.value = CameraCommand.Fit(
                     points = listOf(GeoPoint(fix.latitude, fix.longitude), destination.point),
@@ -275,6 +386,7 @@ class LocatorViewModel(
     fun stopNavigation() {
         navigation.stop()
         if (trackingJob?.isActive == true) startTracking()
+        updateHeadingSubscription()
     }
 
     fun acknowledgeArrival() = navigation.acknowledgeArrival()
@@ -284,9 +396,9 @@ class LocatorViewModel(
 
     fun syncNow() = syncTrigger.requestSync(replace = true)
 
-    private fun center(latitude: Double, longitude: Double, zoom: Double?, durationMillis: Int = 700) {
+    private fun center(latitude: Double, longitude: Double, zoom: Double?, durationMillis: Int = 700, bearing: Double? = null) {
         cameraMoved = true
-        _cameraCommand.value = CameraCommand.Center(latitude, longitude, zoom, durationMillis, ++commandNonce)
+        _cameraCommand.value = CameraCommand.Center(latitude, longitude, zoom, durationMillis, ++commandNonce, bearing)
     }
 
     override fun onCleared() {

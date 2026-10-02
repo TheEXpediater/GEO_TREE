@@ -6,6 +6,8 @@ import com.geotree.app.core.design.PillTone
 import com.geotree.app.core.location.LocationPermission
 import com.geotree.app.core.network.BackendReachability
 import com.geotree.app.core.network.BackendStatus
+import com.geotree.app.core.session.Session
+import com.geotree.app.core.session.SessionState
 import com.geotree.app.core.sync.SyncOutcome
 import com.geotree.app.core.sync.SyncStatusTracker
 import com.geotree.app.data.repository.TreeRepository
@@ -30,6 +32,8 @@ import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Assert.assertFalse
 import org.junit.Before
 import org.junit.Test
 
@@ -57,7 +61,7 @@ class DashboardViewModelTest {
         syncStatus = status, serverVersion = null, lastSyncError = null,
     )
 
-    private fun TestScope.viewModel(): DashboardViewModel {
+    private fun TestScope.viewModel(session: Session? = null): DashboardViewModel {
         val vm = DashboardViewModel(
             repository = TreeRepository(dao),
             locationSource = location,
@@ -67,6 +71,8 @@ class DashboardViewModelTest {
             backendUrl = MutableStateFlow("http://10.0.2.2:8000"),
             lastSyncAt = MutableStateFlow(1_790_000_000_000L),
             deviceOnline = MutableStateFlow(false),
+            session = MutableStateFlow(session),
+            clock = { 1_790_000_000_000L },
             refreshBackend = { backendChecks++ },
         )
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect {} }
@@ -194,4 +200,29 @@ class DashboardViewModelTest {
         bytes = 1, sha256 = "00", minZoom = 13, maxZoom = 17,
         minLatitude = 15.198, maxLatitude = 15.24, minLongitude = 120.648, maxLongitude = 120.715,
     )
+
+    @Test
+    fun `expired session keeps the local dashboard and asks to sign in to sync`() = runTest {
+        dao.rows.value = listOf(row("A", SyncStatus.PENDING, 1), row("B", SyncStatus.SYNCED, 2)).associateBy { it.id }
+        val vm = viewModel(session = Session("old", "admin@gmail.com", expiresAtMillis = 1))
+        advanceUntilIdle()
+
+        val state = vm.state.value
+        assertEquals(SessionState.EXPIRED, state.session)
+        assertTrue(state.authRequired)
+        assertEquals("Sign in to sync", state.sync.label)
+        assertEquals("local data still shown", 2, state.counts.total)
+    }
+
+    @Test
+    fun `valid session does not ask to sign in unless the server rejected the token`() = runTest {
+        val vm = viewModel(session = Session("ok", "admin@gmail.com", expiresAtMillis = 1_790_000_000_000L + 86_400_000L))
+        advanceUntilIdle()
+        assertEquals(SessionState.VALID, vm.state.value.session)
+        assertFalse(vm.state.value.authRequired)
+
+        tracker.finished(SyncOutcome.AuthExpired) // e.g. token revoked on the server
+        advanceUntilIdle()
+        assertTrue(vm.state.value.authRequired)
+    }
 }

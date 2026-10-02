@@ -7,6 +7,7 @@ import com.geotree.app.core.location.LocationPermission
 import com.geotree.app.core.network.BackendReachability
 import com.geotree.app.core.network.BackendStatus
 import com.geotree.app.data.repository.SyncCounts
+import com.geotree.app.core.session.SessionState
 import com.geotree.app.feature.locator.SyncIndicator
 import com.geotree.app.feature.locator.map.CoverageBounds
 import com.geotree.app.feature.locator.map.OfflineMapState
@@ -28,6 +29,8 @@ data class DashboardUiState(
     val sync: SyncIndicator = SyncIndicator("…", PillTone.Neutral),
     val syncRunning: Boolean = false,
     val offlineMap: OfflineMapState = OfflineMapState.Checking,
+    val session: SessionState = SessionState.VALID,
+    val authRequired: Boolean = false,
 ) {
     /** PENDING and FAILED records are both retried by the next sync. */
     val waitingToSync: Int get() = counts.pending + counts.failed

@@ -9,9 +9,33 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
-data class Session(val accessToken: String, val email: String, val expiresAtMillis: Long)
+data class Session(val accessToken: String, val email: String, val expiresAtMillis: Long) {
+    /**
+     * True once the server-issued expiry (JWT `exp`, 7 days after sign-in) has passed on this
+     * device's clock. An unknown expiry (<= 0) is not treated as expired: the server still
+     * rejects a bad token with 401, which sync reports as "sign in to sync".
+     */
+    fun isExpired(nowMillis: Long): Boolean = expiresAtMillis in 1..nowMillis
+}
 
-/** Persists the signed-in session so field work continues offline after one successful login. */
+/**
+ * NONE: never signed in (or signed out) → Login.
+ * VALID: full use, including sync.
+ * EXPIRED: local field work continues; only server sync waits for a new sign-in.
+ */
+enum class SessionState { NONE, VALID, EXPIRED }
+
+fun sessionState(session: Session?, nowMillis: Long): SessionState = when {
+    session == null -> SessionState.NONE
+    session.isExpired(nowMillis) -> SessionState.EXPIRED
+    else -> SessionState.VALID
+}
+
+/**
+ * Persists the signed-in session so field work continues offline after one successful login.
+ * The session survives app restarts and reboots; it is removed only by an explicit Sign Out.
+ * Expiry never deletes it (see [SessionState.EXPIRED]).
+ */
 class SessionStore(private val dataStore: DataStore<Preferences>) {
 
     @Volatile

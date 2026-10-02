@@ -10,6 +10,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 logger = logging.getLogger(__name__)
 
 BACKEND_ROOT = Path(__file__).resolve().parent.parent
@@ -47,7 +49,20 @@ def _env_bool(name: str, default: bool) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _load_local_env_file() -> None:
+    """Optionally read ``backend/.env`` for local runs (e.g. against MongoDB Atlas).
+
+    Real process environment variables always win (``override=False``), so Render and
+    Docker Compose settings are never replaced. A missing file is fine. Values are not logged.
+    """
+    env_file = BACKEND_ROOT / ".env"
+    if env_file.is_file():
+        load_dotenv(env_file, override=False)
+        logger.info("Loaded local settings from backend/.env (process environment takes precedence).")
+
+
 def load_settings() -> Settings:
+    _load_local_env_file()
     environment = os.environ.get("ENVIRONMENT", "development").strip().lower()
     jwt_secret = os.environ.get("JWT_SECRET", "").strip()
     if not jwt_secret:

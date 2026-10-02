@@ -13,6 +13,8 @@ import com.geotree.app.core.location.GpsFix
 import com.geotree.app.core.location.LocationPermission
 import com.geotree.app.core.location.LocationSource
 import com.geotree.app.core.location.LocationUpdateProfile
+import com.geotree.app.core.orientation.HeadingSource
+import com.geotree.app.core.orientation.RawHeading
 import com.geotree.app.data.remote.GeoTreeApi
 import com.geotree.app.data.remote.HealthDto
 import com.geotree.app.data.remote.LoginRequestDto
@@ -230,6 +232,22 @@ class FakeLocationSource(
             fixes.collect { emit(it) }
         } finally {
             openStreams--
+        }
+    }
+}
+
+/** Scriptable compass. Counts open sensor registrations so tests can prove sensors are released. */
+class FakeHeadingSource(override var isSupported: Boolean = true) : HeadingSource {
+    val readingsFlow = MutableSharedFlow<RawHeading>(extraBufferCapacity = 64)
+    var openRegistrations = 0
+        private set
+
+    override fun readings(): Flow<RawHeading> = flow {
+        openRegistrations++
+        try {
+            readingsFlow.collect { emit(it) }
+        } finally {
+            openRegistrations--
         }
     }
 }

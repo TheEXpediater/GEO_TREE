@@ -1,6 +1,7 @@
 package com.geotree.app.core.sync
 
 import com.geotree.app.core.database.TreeEntity
+import com.geotree.app.core.session.SessionState
 import com.geotree.app.core.session.SessionStore
 import com.geotree.app.data.remote.GeoTreeApi
 import com.geotree.app.data.remote.TreeDto
@@ -36,6 +37,13 @@ data class SyncActivity(
     val lastOutcome: SyncOutcome? = null,
     val lastFinishedAt: Long? = null,
 )
+
+/**
+ * Sync needs a new sign-in when the stored session has expired, or when the server rejected the
+ * token on the last run (e.g. it was revoked). Local field work is never blocked by this.
+ */
+fun authRequired(session: SessionState, activity: SyncActivity): Boolean =
+    session == SessionState.EXPIRED || (session == SessionState.VALID && activity.lastOutcome == SyncOutcome.AuthExpired)
 
 /** Process-wide view of sync activity for the UI; record-level state always comes from Room. */
 class SyncStatusTracker(private val clock: () -> Long = System::currentTimeMillis) {
@@ -76,7 +84,9 @@ class SyncEngine(
     }
 
     private suspend fun runSync(): SyncOutcome {
-        if (sessionStore.current() == null) return SyncOutcome.NotSignedIn
+        val session = sessionStore.current() ?: return SyncOutcome.NotSignedIn
+        // An expired token would only earn 401s: pause sync locally until the user signs in again.
+        if (session.isExpired(clock())) return SyncOutcome.AuthExpired
         val api = api()
         checkHealth(api)?.let { return it }
 

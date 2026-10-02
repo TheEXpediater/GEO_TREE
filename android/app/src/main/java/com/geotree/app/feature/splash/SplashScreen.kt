@@ -30,11 +30,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.geotree.app.core.design.GeoColors
 import com.geotree.app.core.design.GeoTreeLogo
-import com.geotree.app.core.network.ApiProvider
-import com.geotree.app.core.session.SessionStore
-import com.geotree.app.core.sync.SyncScheduler
-import com.geotree.app.data.repository.TreeRepository
-import com.geotree.app.feature.locator.map.OfflineMapInstaller
+import com.geotree.app.core.session.Session
+import com.geotree.app.core.session.SessionState
+import com.geotree.app.core.session.sessionState
 import com.geotree.app.geoViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -43,18 +41,31 @@ import kotlinx.coroutines.launch
 
 enum class SplashDestination { Login, Main }
 
+/**
+ * Startup routing. Only the locally stored session decides; the backend is never contacted,
+ * so a signed-in user reaches the Dashboard with Wi-Fi, mobile data and the server all off.
+ * An expired session still opens the Dashboard (local field work), with sync paused.
+ */
+fun startDestination(state: SessionState): SplashDestination = when (state) {
+    SessionState.NONE -> SplashDestination.Login
+    SessionState.VALID, SessionState.EXPIRED -> SplashDestination.Main
+}
+
 data class SplashUiState(
     val step: String = "Starting…",
     val error: String? = null,
     val destination: SplashDestination? = null,
+    val sessionState: SessionState? = null,
 )
 
+/** Real initialisation steps, passed as functions so routing can be tested without Android services. */
 class SplashViewModel(
-    private val treeRepository: TreeRepository,
-    private val sessionStore: SessionStore,
-    private val apiProvider: ApiProvider,
-    private val syncScheduler: SyncScheduler,
-    private val offlineMap: OfflineMapInstaller,
+    private val openLocalRecords: suspend () -> Unit,
+    private val prepareOfflineMap: suspend () -> Unit,
+    private val restoreSession: suspend () -> Session?,
+    private val prepareApiClient: suspend () -> Unit,
+    private val scheduleSync: () -> Unit,
+    private val clock: () -> Long = System::currentTimeMillis,
 ) : ViewModel() {
     private val _state = MutableStateFlow(SplashUiState())
     val state: StateFlow<SplashUiState> = _state.asStateFlow()
@@ -68,24 +79,19 @@ class SplashViewModel(
         viewModelScope.launch {
             try {
                 _state.value = SplashUiState(step = "Opening field records…")
-                treeRepository.treeCount()
+                openLocalRecords()
                 // First launch copies the bundled field map once; later launches only check metadata.
                 // A problem here never blocks field work: the map reports it, trees and GPS still work.
                 _state.value = SplashUiState(step = "Preparing offline field map…")
-                offlineMap.ensureInstalled()
+                prepareOfflineMap()
                 _state.value = SplashUiState(step = "Restoring session…")
-                val session = sessionStore.current()
+                val session = sessionState(restoreSession(), clock())
                 _state.value = SplashUiState(step = "Loading server settings…")
-                apiProvider.api()
-                if (session != null) {
-                    // Offline-safe: work waits for connectivity and a healthy backend.
-                    syncScheduler.requestSync()
-                    syncScheduler.schedulePeriodicSync()
-                }
-                _state.value = SplashUiState(
-                    step = "Ready",
-                    destination = if (session != null) SplashDestination.Main else SplashDestination.Login,
-                )
+                prepareApiClient() // builds the HTTP client only; no request is sent
+                // Offline-safe: the work waits for connectivity and a healthy backend. An expired
+                // session is not scheduled: sync would only be refused until the user signs in.
+                if (session == SessionState.VALID) scheduleSync()
+                _state.value = SplashUiState(step = "Ready", destination = startDestination(session), sessionState = session)
             } catch (e: Exception) {
                 _state.value = SplashUiState(error = "Could not open local records: ${e.message}")
             }
@@ -96,7 +102,16 @@ class SplashViewModel(
 @Composable
 fun SplashScreen(onReady: (SplashDestination) -> Unit) {
     val viewModel = geoViewModel { c, _ ->
-        SplashViewModel(c.treeRepository, c.sessionStore, c.apiProvider, c.syncScheduler, c.offlineMapInstaller)
+        SplashViewModel(
+            openLocalRecords = { c.treeRepository.treeCount() },
+            prepareOfflineMap = { c.offlineMapInstaller.ensureInstalled() },
+            restoreSession = { c.sessionStore.current() },
+            prepareApiClient = { c.apiProvider.api() },
+            scheduleSync = {
+                c.syncScheduler.requestSync()
+                c.syncScheduler.schedulePeriodicSync()
+            },
+        )
     }
     val state by viewModel.state.collectAsStateWithLifecycle()
 

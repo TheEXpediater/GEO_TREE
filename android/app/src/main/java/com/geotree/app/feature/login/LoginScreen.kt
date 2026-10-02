@@ -56,13 +56,18 @@ import com.geotree.app.core.design.GeoTreeLogo
 import com.geotree.app.geoViewModel
 
 @Composable
-fun LoginScreen(onSignedIn: () -> Unit) {
+/**
+ * [reauth] = the stored session expired and the user chose "Sign In to Sync": local data stays,
+ * the new token replaces the old one, and [onBack] returns to the app without signing in.
+ */
+fun LoginScreen(onSignedIn: () -> Unit, reauth: Boolean = false, onBack: (() -> Unit)? = null) {
     val viewModel = geoViewModel { c, _ ->
         LoginViewModel(
             authRepository = c.authRepository,
             serverDescription = { c.backendConfig.current() },
             afterSignIn = {
-                c.syncScheduler.requestSync()
+                // Resume sync immediately (also after a re-sign-in with an expired session).
+                c.syncScheduler.requestSync(replace = true)
                 c.syncScheduler.schedulePeriodicSync()
             },
             prefillEmail = BuildConfig.DEV_EMAIL,
@@ -87,6 +92,10 @@ fun LoginScreen(onSignedIn: () -> Unit) {
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 24.dp, vertical = 32.dp),
         ) {
+            if (reauth) {
+                ReauthNotice(onBack)
+                Spacer(Modifier.height(16.dp))
+            }
             GeoTreeLogo(size = 88.dp)
             Spacer(Modifier.height(12.dp))
             Text("GEO Tree", style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
@@ -181,4 +190,20 @@ fun LoginScreen(onSignedIn: () -> Unit) {
     }
 
     if (showServerDialog) ServerSettingsDialog(onDismiss = { showServerDialog = false })
+}
+
+@Composable
+private fun ReauthNotice(onBack: (() -> Unit)?) {
+    Surface(color = GeoColors.GpsAmberLight, shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth().testTag("reauth_notice")) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Sign in to resume synchronization", style = MaterialTheme.typography.titleSmall)
+            Text(
+                "Your 7-day session has expired. Trees, photos and maps on this device are kept, and field work continues offline.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            if (onBack != null) {
+                TextButton(onClick = onBack, modifier = Modifier.testTag("reauth_back")) { Text("Continue without syncing") }
+            }
+        }
+    }
 }

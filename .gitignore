@@ -47,3 +47,11 @@ tools/offline_map/preview/
 # Physical-device test build copied to the repository root (never commit)
 GEO_Tree_Test.apk
 GEO_Tree_Test.apk.sha256
+
+# Local secrets: MongoDB Atlas credentials and backend environment (never commit)
+backend/.env
+backend/atlas-credentials
+backend/atlas-credentials.*
+.env
+*.env.local
+GEO_Tree_Test.zip

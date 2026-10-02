@@ -1,6 +1,10 @@
 package com.geotree.app.feature.locator.map
 
+import android.graphics.Bitmap
+import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.PointF
+import com.geotree.app.feature.locator.HeadingUpCamera
 import android.graphics.RectF
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -31,6 +35,8 @@ import kotlin.math.hypot
 import kotlinx.coroutines.delay
 import kotlin.math.min
 import org.maplibre.android.MapLibre
+import org.maplibre.android.gestures.MoveGestureDetector
+import org.maplibre.android.gestures.RotateGestureDetector
 import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
@@ -43,6 +49,7 @@ import org.maplibre.android.style.layers.CircleLayer
 import org.maplibre.android.style.layers.LineLayer
 import org.maplibre.android.style.layers.Property
 import org.maplibre.android.style.layers.PropertyFactory
+import org.maplibre.android.style.layers.SymbolLayer
 import org.maplibre.android.style.sources.GeoJsonSource
 import org.maplibre.geojson.Feature
 import org.maplibre.geojson.FeatureCollection
@@ -56,13 +63,14 @@ data class MapCamera(val latitude: Double, val longitude: Double, val zoom: Doub
 sealed interface CameraCommand {
     val nonce: Long
 
-    /** [zoom] null keeps the user's current zoom (used by Follow Location). */
+    /** [zoom] null keeps the user's current zoom (used by Follow Location); [bearing] null keeps the rotation. */
     data class Center(
         val latitude: Double,
         val longitude: Double,
         val zoom: Double?,
         val durationMillis: Int = 700,
         override val nonce: Long,
+        val bearing: Double? = null,
     ) : CameraCommand
 
     /** Shows all [points], never zooming in past [maxZoom]. */
@@ -82,7 +90,11 @@ fun TreeMap(
     destinationTreeId: String?,
     route: List<GeoPoint>?,
     currentFix: GpsFix?,
+    /** Phone heading (degrees from true north): turns the location dot into a rotating chevron. */
+    deviceHeading: Double?,
     cameraCommand: CameraCommand?,
+    /** Non-null in Heading Up: keeps the camera on the user with map bearing = phone heading. */
+    headingUp: HeadingUpCamera?,
     initialCamera: MapCamera,
     minZoom: Double,
     topInset: Dp,
@@ -92,6 +104,7 @@ fun TreeMap(
     onMapClick: () -> Unit,
     onUserGesture: () -> Unit,
     onCameraIdle: (MapCamera) -> Unit,
+    onBearingChanged: (Double) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -107,6 +120,7 @@ fun TreeMap(
     val latestMapClick by rememberUpdatedState(onMapClick)
     val latestGesture by rememberUpdatedState(onUserGesture)
     val latestCameraIdle by rememberUpdatedState(onCameraIdle)
+    val latestBearing by rememberUpdatedState(onBearingChanged)
     val latestFix by rememberUpdatedState(currentFix)
     val latestTopInset by rememberUpdatedState(topInset)
     val latestFitBottomInset by rememberUpdatedState(fitBottomInset)
@@ -138,8 +152,8 @@ fun TreeMap(
                 .target(LatLng(initialCamera.latitude, initialCamera.longitude))
                 .zoom(initialCamera.zoom)
                 .build()
-            m.uiSettings.isCompassEnabled = true
-            m.uiSettings.setCompassFadeFacingNorth(false)
+            // GEO Tree draws its own compass/orientation control; MapLibre's would duplicate it.
+            m.uiSettings.isCompassEnabled = false
             m.addOnMapClickListener { point ->
                 val screen = m.projection.toScreenLocation(point)
                 val slop = with(density) { 22.dp.toPx() }
@@ -148,11 +162,23 @@ fun TreeMap(
                 if (id != null) latestTreeClick(id) else latestMapClick()
                 true
             }
-            m.addOnCameraMoveStartedListener { reason ->
-                // Only a finger on the map cancels Follow Location; our own animations do not.
-                if (reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE) latestGesture()
+            // A finger panning or rotating the map ends Follow / Heading Up; pinch-zoom keeps following.
+            // MapLibre's gesture callbacks fire only for touches, never for our own camera animations
+            // (the constant Heading Up eases would otherwise hide a drag that started mid-animation).
+            m.addOnMoveListener(object : MapLibreMap.OnMoveListener {
+                override fun onMoveBegin(detector: MoveGestureDetector) = latestGesture()
+                override fun onMove(detector: MoveGestureDetector) = Unit
+                override fun onMoveEnd(detector: MoveGestureDetector) = Unit
+            })
+            m.addOnRotateListener(object : MapLibreMap.OnRotateListener {
+                override fun onRotateBegin(detector: RotateGestureDetector) = latestGesture()
+                override fun onRotate(detector: RotateGestureDetector) = Unit
+                override fun onRotateEnd(detector: RotateGestureDetector) = Unit
+            })
+            m.addOnCameraMoveListener {
+                style?.let { updateAccuracyHalo(m, it, latestFix, density.density) }
+                latestBearing(m.cameraPosition.bearing)
             }
-            m.addOnCameraMoveListener { style?.let { updateAccuracyHalo(m, it, latestFix, density.density) } }
             m.addOnCameraIdleListener {
                 val target = m.cameraPosition.target ?: return@addOnCameraIdleListener
                 latestCameraIdle(MapCamera(target.latitude, target.longitude, m.cameraPosition.zoom))
@@ -166,7 +192,7 @@ fun TreeMap(
         val m = map ?: return@LaunchedEffect
         style = null
         m.setStyle(Style.Builder().fromJson(styleJson)) { loaded ->
-            installLayers(loaded)
+            installLayers(loaded, chevronBitmap(density.density))
             style = loaded
         }
     }
@@ -182,7 +208,6 @@ fun TreeMap(
             val top = topInset.roundToPx()
             val bottom = bottomInset.roundToPx()
             val side = 16.dp.roundToPx()
-            m.uiSettings.setCompassMargins(0, top, side, 0)
             m.uiSettings.setLogoMargins(side, 0, 0, bottom)
             m.uiSettings.setAttributionMargins(side + 96.dp.roundToPx(), 0, 0, bottom)
         }
@@ -210,12 +235,16 @@ fun TreeMap(
         s.getSourceAs<GeoJsonSource>(ROUTE_SOURCE)?.setGeoJson(collection)
     }
 
-    LaunchedEffect(style, currentFix) {
+    LaunchedEffect(style, currentFix, deviceHeading) {
         val s = style ?: return@LaunchedEffect
         val m = map ?: return@LaunchedEffect
         val fix = currentFix
         val collection = if (fix == null) FeatureCollection.fromFeatures(emptyList())
-        else FeatureCollection.fromFeature(Feature.fromGeometry(Point.fromLngLat(fix.longitude, fix.latitude)))
+        else FeatureCollection.fromFeature(
+            Feature.fromGeometry(Point.fromLngLat(fix.longitude, fix.latitude)).apply {
+                deviceHeading?.let { addNumberProperty("heading", it) }
+            },
+        )
         s.getSourceAs<GeoJsonSource>(DEVICE_SOURCE)?.setGeoJson(collection)
         updateAccuracyHalo(m, s, fix, density.density)
     }
@@ -224,9 +253,13 @@ fun TreeMap(
         val m = map ?: return@LaunchedEffect
         when (val command = cameraCommand ?: return@LaunchedEffect) {
             is CameraCommand.Center -> {
-                val target = LatLng(command.latitude, command.longitude)
-                val update = command.zoom?.let { CameraUpdateFactory.newLatLngZoom(target, it) } ?: CameraUpdateFactory.newLatLng(target)
-                m.animateCamera(update, command.durationMillis)
+                val position = CameraPosition.Builder()
+                    .target(LatLng(command.latitude, command.longitude))
+                    .zoom(command.zoom ?: m.cameraPosition.zoom)
+                    .bearing(command.bearing ?: m.cameraPosition.bearing)
+                    .tilt(m.cameraPosition.tilt)
+                    .build()
+                m.animateCamera(CameraUpdateFactory.newCameraPosition(position), command.durationMillis)
             }
             is CameraCommand.Fit -> {
                 // A Fit usually comes with UI that changes the bottom overlay (the navigation panel
@@ -251,13 +284,28 @@ fun TreeMap(
         }
     }
 
+    // Heading Up: short eases keep the user centred and the map turning with the phone without
+    // queueing long animations (each new sensor reading replaces the previous ease).
+    LaunchedEffect(map, headingUp) {
+        val m = map ?: return@LaunchedEffect
+        val target = headingUp ?: return@LaunchedEffect
+        val position = CameraPosition.Builder()
+            .target(LatLng(target.latitude, target.longitude))
+            .zoom(m.cameraPosition.zoom)
+            .bearing(target.bearing)
+            .tilt(m.cameraPosition.tilt)
+            .build()
+        m.easeCamera(CameraUpdateFactory.newCameraPosition(position), HEADING_UP_EASE_MILLIS)
+    }
+
     AndroidView(
         factory = { mapView },
         modifier = modifier.semantics { contentDescription = "Field map with ${trees.size} tree markers" },
     )
 }
 
-private fun installLayers(style: Style) {
+private fun installLayers(style: Style, chevron: Bitmap) {
+    style.addImage(CHEVRON_IMAGE, chevron)
     style.addSource(GeoJsonSource(ROUTE_SOURCE))
     style.addSource(GeoJsonSource(TREE_SOURCE))
     style.addSource(GeoJsonSource(DEVICE_SOURCE))
@@ -327,13 +375,24 @@ private fun installLayers(style: Style) {
             PropertyFactory.circleStrokeWidth(3f),
         ),
     )
+    // Without a compass heading the position is a dot; with one it is a chevron pointing where the
+    // phone faces (rotation is relative to map north, so it stays correct in Heading Up too).
     style.addLayer(
         CircleLayer(DEVICE_DOT_LAYER, DEVICE_SOURCE).withProperties(
             PropertyFactory.circleColor(DEVICE_COLOR),
             PropertyFactory.circleRadius(7f),
             PropertyFactory.circleStrokeColor(android.graphics.Color.WHITE),
             PropertyFactory.circleStrokeWidth(3f),
-        ),
+        ).withFilter(Expression.not(Expression.has("heading"))),
+    )
+    style.addLayer(
+        SymbolLayer(DEVICE_CHEVRON_LAYER, DEVICE_SOURCE).withProperties(
+            PropertyFactory.iconImage(CHEVRON_IMAGE),
+            PropertyFactory.iconRotate(Expression.get("heading")),
+            PropertyFactory.iconRotationAlignment(Property.ICON_ROTATION_ALIGNMENT_MAP),
+            PropertyFactory.iconAllowOverlap(true),
+            PropertyFactory.iconIgnorePlacement(true),
+        ).withFilter(Expression.has("heading")),
     )
 }
 
@@ -356,9 +415,37 @@ private const val DESTINATION_HALO_LAYER = "geo-destination-halo"
 private const val DEVICE_SOURCE = "geo-device"
 private const val DEVICE_HALO_LAYER = "geo-device-halo"
 private const val DEVICE_DOT_LAYER = "geo-device-dot"
+private const val DEVICE_CHEVRON_LAYER = "geo-device-chevron"
+private const val CHEVRON_IMAGE = "geo-device-chevron-image"
+private const val HEADING_UP_EASE_MILLIS = 180
 private const val ROUTE_SOURCE = "geo-route"
 private const val ROUTE_CASING_LAYER = "geo-route-casing"
 private const val ROUTE_LAYER = "geo-route-line"
 private val DEVICE_COLOR = android.graphics.Color.rgb(0x2B, 0x6C, 0xB0)
 private val ROUTE_COLOR = android.graphics.Color.rgb(0xD6, 0x2F, 0x26)
 private val ROUTE_CASING_COLOR = android.graphics.Color.rgb(0x6E, 0x14, 0x10)
+
+/** Blue location chevron with a white outline, pointing up (north) before rotation. */
+private fun chevronBitmap(density: Float): Bitmap {
+    val size = (34 * density).toInt().coerceAtLeast(24)
+    val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+    val canvas = android.graphics.Canvas(bitmap)
+    val c = size / 2f
+    val path = Path().apply {
+        moveTo(c, size * 0.08f)
+        lineTo(size * 0.86f, size * 0.88f)
+        lineTo(c, size * 0.66f)
+        lineTo(size * 0.14f, size * 0.88f)
+        close()
+    }
+    val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = DEVICE_COLOR; style = Paint.Style.FILL }
+    val outline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.WHITE
+        style = Paint.Style.STROKE
+        strokeWidth = 2.5f * density
+        strokeJoin = Paint.Join.ROUND
+    }
+    canvas.drawPath(path, fill)
+    canvas.drawPath(path, outline)
+    return bitmap
+}

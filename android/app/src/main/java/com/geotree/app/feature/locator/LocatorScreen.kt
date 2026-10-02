@@ -1,11 +1,24 @@
 package com.geotree.app.feature.locator
 
 import android.Manifest
+import kotlin.math.abs
+import com.geotree.app.core.orientation.degreesOrNull
+import com.geotree.app.core.orientation.DeclinationSource
+import com.geotree.app.core.design.GeoColors
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.Path
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.BorderStroke
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -96,6 +109,9 @@ fun LocatorScreen(
             syncTracker = c.syncStatusTracker,
             navigation = FieldNavigationController(c.routeProvider, c.navigationConfig),
             basemapSource = c.basemap(),
+            headingSource = c.headingSource,
+            declination = DeclinationSource.Android,
+            session = c.sessionStore.session,
         )
     }
     val trees by viewModel.trees.collectAsStateWithLifecycle()
@@ -105,7 +121,11 @@ fun LocatorScreen(
     val selectedId by viewModel.selectedTreeId.collectAsStateWithLifecycle()
     val selectedDistance by viewModel.selectedTreeDistanceMeters.collectAsStateWithLifecycle()
     val cameraCommand by viewModel.cameraCommand.collectAsStateWithLifecycle()
-    val following by viewModel.following.collectAsStateWithLifecycle()
+    val mapMode by viewModel.mapMode.collectAsStateWithLifecycle()
+    val heading by viewModel.heading.collectAsStateWithLifecycle()
+    val panelExpanded by viewModel.panelExpanded.collectAsStateWithLifecycle()
+    val headingUpCamera by viewModel.headingUpCamera.collectAsStateWithLifecycle()
+    val message by viewModel.message.collectAsStateWithLifecycle()
     val navigation by viewModel.navigationState.collectAsStateWithLifecycle()
     val basemap by viewModel.basemap.collectAsStateWithLifecycle()
     val coverage by viewModel.coverage.collectAsStateWithLifecycle()
@@ -116,8 +136,13 @@ fun LocatorScreen(
 
     val snackbar = remember { SnackbarHostState() }
     var showList by remember { mutableStateOf(false) }
+    // Measured, not guessed: controls and map ornaments are placed around the real sizes.
     var bottomOverlayPx by remember { mutableIntStateOf(0) }
     var panelPx by remember { mutableIntStateOf(0) }
+    var emptyStatePx by remember { mutableIntStateOf(0) }
+    var topBarPx by remember { mutableIntStateOf(0) }
+    var controlsPx by remember { mutableIntStateOf(0) }
+    var mapBearing by remember { mutableFloatStateOf(0f) }
     val density = LocalDensity.current
     val initialCamera = remember { viewModel.initialCamera() }
 
@@ -153,6 +178,9 @@ fun LocatorScreen(
             viewModel.onNavigationTick()
         }
     }
+    LaunchedEffect(message) {
+        message?.let { snackbar.showSnackbar(it.text) }
+    }
     LaunchedEffect(navigateId, trees) {
         val id = navigateId ?: return@LaunchedEffect
         if (trees.none { it.id == id }) return@LaunchedEffect
@@ -160,7 +188,20 @@ fun LocatorScreen(
         viewModel.startNavigation(id)
     }
 
-    Box(Modifier.fillMaxSize()) {
+    val topBarDp = with(density) { topBarPx.toDp() }
+    val showEmptyState = trees.isEmpty() && navigation == null
+    // Bottom-left map ornaments (logo, ⓘ attribution) sit above whatever occupies the bottom-left.
+    val leftStackPx = when {
+        navigation != null -> panelPx
+        showEmptyState -> emptyStatePx
+        else -> 0
+    }
+
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        // The expanded panel may use the height left under the top bar and the orientation control,
+        // after the right-hand FABs and gaps; it scrolls inside that on short screens instead of
+        // pushing the FABs into the top controls.
+        val panelMaxHeight = (maxHeight - topBarDp - 56.dp - with(density) { controlsPx.toDp() } - 36.dp).coerceAtLeast(160.dp)
         TreeMap(
             styleJson = basemap.styleJson,
             trees = trees,
@@ -168,17 +209,19 @@ fun LocatorScreen(
             destinationTreeId = navigation?.destination?.treeId,
             route = navigation?.route?.geometry,
             currentFix = fix,
+            deviceHeading = heading.degreesOrNull,
             cameraCommand = cameraCommand,
+            headingUp = headingUpCamera,
             initialCamera = initialCamera,
             minZoom = if (basemap.hasOfflineTiles) MapZoom.OFFLINE_MIN else 0.0,
-            topInset = 150.dp,
-            // Ornaments (logo, attribution) sit above the guidance panel; the FABs are on the right.
-            bottomInset = with(density) { (if (navigation != null) panelPx else 0).toDp() } + 16.dp,
+            topInset = topBarDp,
+            bottomInset = with(density) { leftStackPx.toDp() } + 20.dp,
             fitBottomInset = with(density) { bottomOverlayPx.toDp() },
             onTreeClick = viewModel::selectTree,
             onMapClick = { viewModel.selectTree(null) },
             onUserGesture = viewModel::onUserGesture,
             onCameraIdle = viewModel::onCameraIdle,
+            onBearingChanged = { b -> if (abs(b - mapBearing) > 0.5) mapBearing = b.toFloat() },
             modifier = Modifier.fillMaxSize(),
         )
 
@@ -191,12 +234,20 @@ fun LocatorScreen(
             onShowList = { showList = true },
             onSyncNow = viewModel::syncNow,
             onRequestLocation = requestLocation,
-            modifier = Modifier.align(Alignment.TopCenter),
+            modifier = Modifier.align(Alignment.TopCenter).onSizeChanged { topBarPx = it.height },
+        )
+
+        // Top right, directly under the measured top bar: the one compass / orientation control.
+        MapOrientationButton(
+            mapBearing = mapBearing,
+            mode = mapMode,
+            onClick = viewModel::toggleHeadingUp,
+            modifier = Modifier.align(Alignment.TopEnd).padding(top = topBarDp + 8.dp, end = 12.dp),
         )
 
         if (coverage == MapCoverage.OUTSIDE) {
-            // Left-aligned so the compass at top-right stays visible.
-            CoverageNotice(Modifier.align(Alignment.TopStart).statusBarsPadding().padding(start = 12.dp, end = 84.dp, top = 112.dp))
+            // Left of the orientation control so neither covers the other.
+            CoverageNotice(Modifier.align(Alignment.TopStart).padding(start = 12.dp, end = 76.dp, top = topBarDp + 8.dp))
         }
 
         Column(
@@ -209,8 +260,13 @@ fun LocatorScreen(
         ) {
             Row(verticalAlignment = Alignment.Bottom, modifier = Modifier.fillMaxWidth()) {
                 Box(Modifier.weight(1f)) {
-                    if (trees.isEmpty() && navigation == null) {
-                        Surface(shape = MaterialTheme.shapes.medium, tonalElevation = 2.dp, shadowElevation = 2.dp) {
+                    if (showEmptyState) {
+                        Surface(
+                            shape = MaterialTheme.shapes.medium,
+                            tonalElevation = 2.dp,
+                            shadowElevation = 2.dp,
+                            modifier = Modifier.onSizeChanged { emptyStatePx = it.height },
+                        ) {
                             Text(
                                 "No trees tagged yet.\nTap Tag Tree to register one.",
                                 style = MaterialTheme.typography.bodySmall,
@@ -220,19 +276,30 @@ fun LocatorScreen(
                     }
                 }
                 MapControls(
-                    following = following,
+                    modifier = Modifier.onSizeChanged { controlsPx = it.height },
+                    mapMode = mapMode,
                     navigating = navigation != null,
-                    onToggleFollow = viewModel::toggleFollowLocation,
                     onMyLocation = viewModel::centerOnCurrentLocation,
                     onTagTree = onTagTree,
                 )
             }
             navigation?.let {
-                NavigationPanel(it, onStop = viewModel::stopNavigation, config = config, modifier = Modifier.onSizeChanged { size -> panelPx = size.height })
+                NavigationPanel(
+                    state = it,
+                    heading = heading,
+                    expanded = panelExpanded,
+                    headingUp = mapMode == MapFollowMode.HEADING_UP,
+                    onExpandedChange = viewModel::setPanelExpanded,
+                    onCompassTap = viewModel::toggleHeadingUp,
+                    onStop = viewModel::stopNavigation,
+                    config = config,
+                    modifier = Modifier.onSizeChanged { size -> panelPx = size.height },
+                    maxHeight = panelMaxHeight,
+                )
             }
         }
 
-        SnackbarHost(snackbar, Modifier.align(Alignment.TopCenter).padding(top = 160.dp))
+        SnackbarHost(snackbar, Modifier.align(Alignment.TopCenter).padding(top = topBarDp + 64.dp))
     }
 
     trees.firstOrNull { it.id == selectedId }?.let { tree ->
@@ -268,28 +335,28 @@ fun LocatorScreen(
     }
 }
 
+/** Right-side actions: the single My Location control (also turns on following) and Tag Tree. */
 @Composable
 private fun MapControls(
-    following: Boolean,
+    modifier: Modifier = Modifier,
+    mapMode: MapFollowMode,
     navigating: Boolean,
-    onToggleFollow: () -> Unit,
     onMyLocation: () -> Unit,
     onTagTree: () -> Unit,
 ) {
-    Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        SmallFloatingActionButton(
-            onClick = onToggleFollow,
-            containerColor = if (following) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
-            contentColor = if (following) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary,
-            modifier = Modifier.testTag("follow_location").semantics {
-                stateDescription = if (following) "Following your location" else "Not following"
-            },
-        ) { Icon(painterResource(R.drawable.ic_navigation), contentDescription = if (following) "Stop following location" else "Follow my location") }
+    val following = mapMode != MapFollowMode.FREE
+    Column(modifier, horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(12.dp)) {
         SmallFloatingActionButton(
             onClick = onMyLocation,
-            containerColor = MaterialTheme.colorScheme.surface,
+            containerColor = if (following) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
             contentColor = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.testTag("my_location"),
+            modifier = Modifier.testTag("my_location").semantics {
+                stateDescription = when (mapMode) {
+                    MapFollowMode.FREE -> "Not following"
+                    MapFollowMode.FOLLOW_LOCATION -> "Following your location, north up"
+                    MapFollowMode.HEADING_UP -> "Following your location, heading up"
+                }
+            },
         ) { Icon(painterResource(R.drawable.ic_my_location), contentDescription = "Center on my location") }
         if (navigating) {
             FloatingActionButton(
@@ -404,6 +471,52 @@ private fun CoverageNotice(modifier: Modifier = Modifier) {
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        }
+    }
+}
+
+/**
+ * The map's single compass/orientation control (MapLibre's own compass is disabled). The needle
+ * shows where north is on screen. Tap: Heading Up ⇄ North Up.
+ */
+@Composable
+private fun MapOrientationButton(mapBearing: Float, mode: MapFollowMode, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val headingUp = mode == MapFollowMode.HEADING_UP
+    val north = GeoColors.Clay
+    val south = MaterialTheme.colorScheme.outline
+    Surface(
+        shape = CircleShape,
+        color = if (headingUp) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
+        shadowElevation = 3.dp,
+        border = if (headingUp) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null,
+        modifier = modifier
+            .size(48.dp)
+            .clickable(onClickLabel = if (headingUp) "Switch to North Up" else "Switch to Heading Up", onClick = onClick)
+            .semantics {
+                contentDescription = "Map orientation"
+                stateDescription = if (headingUp) "Heading up" else "North up"
+            }
+            .testTag("map_orientation"),
+    ) {
+        Canvas(Modifier.padding(10.dp)) {
+            rotate(-mapBearing) {
+                val r = size.minDimension / 2f
+                val w = r * 0.32f
+                val northHalf = Path().apply {
+                    moveTo(center.x, center.y - r)
+                    lineTo(center.x + w, center.y)
+                    lineTo(center.x - w, center.y)
+                    close()
+                }
+                val southHalf = Path().apply {
+                    moveTo(center.x, center.y + r)
+                    lineTo(center.x + w, center.y)
+                    lineTo(center.x - w, center.y)
+                    close()
+                }
+                drawPath(northHalf, north)
+                drawPath(southHalf, south)
+            }
         }
     }
 }

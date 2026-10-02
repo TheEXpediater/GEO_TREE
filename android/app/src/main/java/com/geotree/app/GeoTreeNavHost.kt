@@ -41,6 +41,9 @@ import com.geotree.app.feature.treedetail.TreeDetailScreen
 private object Routes {
     const val SPLASH = "splash"
     const val LOGIN = "login"
+    /** Login with an optional re-authentication flag ("Sign In to Sync" with an expired session). */
+    const val LOGIN_PATTERN = "login?reauth={reauth}"
+    const val REAUTH = "login?reauth=true"
 
     /** Authenticated shell graph: Dashboard | Map | Settings with a persistent bottom bar. */
     const val MAIN = "main"
@@ -101,10 +104,20 @@ fun GeoTreeNavHost(modifier: Modifier = Modifier) {
                     navController.navigate(route) { popUpTo(Routes.SPLASH) { inclusive = true } }
                 })
             }
-            composable(Routes.LOGIN) {
-                LoginScreen(onSignedIn = {
-                    navController.navigate(Routes.MAIN) { popUpTo(Routes.LOGIN) { inclusive = true } }
-                })
+            composable(
+                Routes.LOGIN_PATTERN,
+                arguments = listOf(navArgument("reauth") { type = NavType.BoolType; defaultValue = false }),
+            ) { entry ->
+                val reauth = entry.arguments?.getBoolean("reauth") == true
+                LoginScreen(
+                    reauth = reauth,
+                    // Re-sign-in returns to where the user was; the shell and its state are untouched.
+                    onBack = if (reauth) ({ navController.popBackStack() }) else null,
+                    onSignedIn = {
+                        if (reauth) navController.popBackStack()
+                        else navController.navigate(Routes.MAIN) { popUpTo(Routes.LOGIN_PATTERN) { inclusive = true } }
+                    },
+                )
             }
             navigation(route = Routes.MAIN, startDestination = Routes.DASHBOARD) {
                 composable(Routes.DASHBOARD) {
@@ -112,6 +125,7 @@ fun GeoTreeNavHost(modifier: Modifier = Modifier) {
                         onTagTree = { navController.navigate(Routes.TAG_TREE) },
                         onOpenMap = { navController.navigateToTab(Routes.MAP) },
                         onOpenTree = { id -> navController.navigate(Routes.treeDetail(id)) },
+                        onSignInToSync = { navController.navigate(Routes.REAUTH) },
                     )
                 }
                 composable(Routes.MAP) { entry ->
@@ -130,9 +144,10 @@ fun GeoTreeNavHost(modifier: Modifier = Modifier) {
                     )
                 }
                 composable(Routes.SETTINGS) {
-                    SettingsScreen(onSignedOut = {
-                        navController.navigate(Routes.LOGIN) { popUpTo(Routes.MAIN) { inclusive = true } }
-                    })
+                    SettingsScreen(
+                        onSignedOut = { navController.navigate(Routes.LOGIN) { popUpTo(Routes.MAIN) { inclusive = true } } },
+                        onSignInToSync = { navController.navigate(Routes.REAUTH) },
+                    )
                 }
             }
             composable(Routes.TAG_TREE) {

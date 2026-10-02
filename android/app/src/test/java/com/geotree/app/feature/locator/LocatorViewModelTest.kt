@@ -1,6 +1,7 @@
 package com.geotree.app.feature.locator
 
 import com.geotree.app.core.location.LocationPermission
+import com.geotree.app.core.session.Session
 import com.geotree.app.core.location.LocationUpdateProfile
 import com.geotree.app.core.sync.SyncStatusTracker
 import com.geotree.app.data.model.TreeDraft
@@ -18,6 +19,7 @@ import com.geotree.app.feature.locator.map.resolveBasemap
 import com.geotree.app.feature.navigation.DirectRouteProvider
 import com.geotree.app.feature.navigation.FieldNavigationController
 import com.geotree.app.feature.navigation.GeoPoint
+import com.geotree.app.testing.FakeHeadingSource
 import com.geotree.app.testing.FakeLocationSource
 import com.geotree.app.testing.FakeTreeDao
 import com.geotree.app.testing.gpsFix
@@ -219,12 +221,14 @@ class LocatorViewModelTest {
     }
 
     @Test
-    fun `follow mode tracks fixes until the user moves the map`() = runTest {
+    fun `my location follows the user north up until the user moves the map`() = runTest {
         val vm = viewModel()
         tracking(vm, here)
+        assertEquals(MapFollowMode.FREE, vm.mapMode.value)
 
-        vm.setFollowing(true)
-        assertTrue(vm.following.value)
+        vm.centerOnCurrentLocation()
+        assertEquals(MapFollowMode.FOLLOW_LOCATION, vm.mapMode.value)
+        assertEquals("north up", 0.0, (vm.cameraCommand.value as CameraCommand.Center).bearing!!, 0.0)
         val moved = gpsFix(15.2171, 120.6604)
         location.fixes.emit(moved)
         advanceUntilIdle()
@@ -233,7 +237,7 @@ class LocatorViewModelTest {
         assertNull("follow keeps the user's zoom", follow.zoom)
 
         vm.onUserGesture()
-        assertFalse(vm.following.value)
+        assertEquals(MapFollowMode.FREE, vm.mapMode.value)
         location.fixes.emit(gpsFix(15.2175, 120.6608))
         advanceUntilIdle()
         assertSame(follow, vm.cameraCommand.value)
@@ -341,5 +345,19 @@ class LocatorViewModelTest {
     fun `sync now replaces any queued sync`() = runTest {
         viewModel().syncNow()
         assertEquals(listOf(true), syncRequests)
+    }
+
+    @Test
+    fun `map sync chip asks to sign in while the session is expired`() = runTest {
+        val vm = LocatorViewModel(
+            repository = repository, locationSource = location, syncTrigger = { syncRequests += it },
+            syncTracker = SyncStatusTracker(), navigation = FieldNavigationController(DirectRouteProvider()),
+            basemapSource = flowOf(resolveBasemap(MapSourceType.ONLINE_DEV, null)),
+            session = flowOf(Session("old", "admin@gmail.com", expiresAtMillis = 1)),
+            clock = { 1_790_000_000_000L },
+        )
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.syncIndicator.collect {} }
+        advanceUntilIdle()
+        assertEquals("Sign in to sync", vm.syncIndicator.value.label)
     }
 }

@@ -4,6 +4,8 @@ import com.geotree.app.core.database.SyncStatus
 import com.geotree.app.core.session.Session
 import com.geotree.app.core.session.SessionStore
 import com.geotree.app.data.model.TreeDraft
+import com.geotree.app.data.repository.AuthRepository
+import com.geotree.app.data.repository.LoginResult
 import com.geotree.app.data.repository.CreateTreeResult
 import com.geotree.app.data.repository.TreeRepository
 import com.geotree.app.testing.FakeGeoTreeServer
@@ -198,5 +200,42 @@ class SyncEngineTest {
         server.healthy = true
         assertTrue(engine.sync() is SyncOutcome.Completed)
         assertTrue(preferences.lastSuccessfulSyncAt.first() != null)
+    }
+
+    @Test
+    fun `expired session pauses sync without contacting the server and keeps local trees`() = runTest {
+        val tree = createTree("GEO-TAM-020")
+        sessionStore.save(Session("old-token", "admin@gmail.com", expiresAtMillis = 1))
+        val fixedEngine = SyncEngine(repository, { server }, sessionStore, preferences, SyncStatusTracker(), clock = { FIXED_NOW })
+
+        assertEquals(SyncOutcome.AuthExpired, fixedEngine.sync())
+
+        assertEquals("no request with an expired token", 0, server.syncCalls)
+        assertEquals(SyncStatus.PENDING, dao.getById(tree.id)!!.syncStatus)
+        assertTrue(File(tree.localImagePath!!).exists())
+    }
+
+    @Test
+    fun `signing in again replaces the token, keeps Room data and resumes sync`() = runTest {
+        val a = createTree("GEO-TAM-021")
+        val b = createTree("GEO-TAM-022")
+        sessionStore.save(Session("old-token", "admin@gmail.com", expiresAtMillis = 1))
+        val fixedEngine = SyncEngine(repository, { server }, sessionStore, preferences, SyncStatusTracker(), clock = { FIXED_NOW })
+        assertEquals(SyncOutcome.AuthExpired, fixedEngine.sync())
+
+        val login = AuthRepository({ server }, sessionStore).login("admin@gmail.com", "admin123")
+
+        assertTrue(login is LoginResult.Success)
+        assertEquals("token-123", sessionStore.current()!!.accessToken)
+        assertEquals("local trees untouched by re-login", 2, dao.count())
+        val outcome = fixedEngine.sync() as SyncOutcome.Completed
+        assertEquals(2, outcome.pushed)
+        assertEquals(SyncStatus.SYNCED, dao.getById(a.id)!!.syncStatus)
+        assertEquals(SyncStatus.SYNCED, dao.getById(b.id)!!.syncStatus)
+    }
+
+    private companion object {
+        /** Before the fake server's token expiry (2026-10-05), so the test does not depend on today's date. */
+        const val FIXED_NOW = 1_790_000_000_000L
     }
 }

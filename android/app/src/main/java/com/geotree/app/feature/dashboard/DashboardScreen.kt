@@ -62,12 +62,13 @@ import com.geotree.app.core.design.GeoTreeLogo
 import com.geotree.app.core.design.PillTone
 import com.geotree.app.core.design.StatusPill
 import com.geotree.app.core.design.TreeImage
+import com.geotree.app.core.network.BackendReachability
 import com.geotree.app.core.design.label
 import com.geotree.app.core.design.tone
 import com.geotree.app.geoViewModel
 
 @Composable
-fun DashboardScreen(onTagTree: () -> Unit, onOpenMap: () -> Unit, onOpenTree: (String) -> Unit) {
+fun DashboardScreen(onTagTree: () -> Unit, onOpenMap: () -> Unit, onOpenTree: (String) -> Unit, onSignInToSync: () -> Unit) {
     val viewModel = geoViewModel { c, _ ->
         DashboardViewModel(
             repository = c.treeRepository,
@@ -79,6 +80,7 @@ fun DashboardScreen(onTagTree: () -> Unit, onOpenMap: () -> Unit, onOpenTree: (S
             lastSyncAt = c.syncPreferences.lastSuccessfulSyncAt,
             deviceOnline = c.networkMonitor.isConnected,
             offlineMap = c.offlineMapInstaller.state,
+            session = c.sessionStore.session,
             refreshBackend = { c.backendConnection.refreshStatus() },
             refreshLastKnownFix = { c.locationClient.refreshLastKnown() },
         )
@@ -96,6 +98,9 @@ fun DashboardScreen(onTagTree: () -> Unit, onOpenMap: () -> Unit, onOpenTree: (S
         modifier = Modifier.fillMaxSize().testTag("dashboard"),
     ) {
         item { DashboardHeader(state) }
+        if (state.authRequired) {
+            item { SignInToSyncBanner(state.waitingToSync, state.backend.reachability == BackendReachability.CONNECTED, onSignInToSync) }
+        }
         item { StatisticsGrid(state) }
         pendingMessage(state.waitingToSync)?.let { message ->
             item { PendingBanner(message, state.syncRunning, onSyncNow = viewModel::syncNow) }
@@ -328,5 +333,26 @@ private fun SurveyContours(modifier: Modifier = Modifier) {
     Canvas(modifier.clipToBounds()) {
         val origin = Offset(size.width * 0.95f, size.height * 0.1f)
         for (i in 1..6) drawCircle(color, radius = i * 38.dp.toPx(), center = origin, style = Stroke(width = 1.5.dp.toPx()))
+    }
+}
+
+/** Non-blocking: shown while sync needs a new sign-in. Everything else on the Dashboard keeps working. */
+@Composable
+private fun SignInToSyncBanner(waiting: Int, backendReachable: Boolean, onSignIn: () -> Unit) {
+    Surface(color = GeoColors.GpsAmberLight, shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth().testTag("signin_to_sync_banner")) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Sign in to resume synchronization", style = MaterialTheme.typography.titleSmall, color = Color(0xFF6B4300))
+            Text(
+                (pendingMessage(waiting)?.let { "$it. " } ?: "") +
+                    "Your session expired. Tagging, the offline map and field guidance keep working on this device.",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color(0xFF6B4300),
+            )
+            if (backendReachable) {
+                Button(onClick = onSignIn, modifier = Modifier.testTag("signin_to_sync")) { Text("Sign In to Sync") }
+            } else {
+                Text("Connect to the GEO Tree server to sign in again.", style = MaterialTheme.typography.bodySmall, color = Color(0xFF6B4300))
+            }
+        }
     }
 }

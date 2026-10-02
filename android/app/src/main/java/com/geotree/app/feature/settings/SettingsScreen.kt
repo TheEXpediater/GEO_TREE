@@ -14,6 +14,7 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
@@ -41,6 +42,7 @@ import com.geotree.app.BuildConfig
 import com.geotree.app.core.design.Formatters
 import com.geotree.app.core.design.StatusPill
 import com.geotree.app.core.network.BackendConnectionManager
+import com.geotree.app.core.session.Session
 import com.geotree.app.core.network.BackendReachability
 import com.geotree.app.core.network.BackendStatus
 import com.geotree.app.core.sync.SyncScheduler
@@ -70,6 +72,7 @@ import kotlinx.coroutines.launch
 class SettingsViewModel(
     repository: TreeRepository,
     email: Flow<String?>,
+    session: Flow<Session?>,
     backendUrl: Flow<String>,
     lastSyncAt: Flow<Long?>,
     basemap: Flow<Basemap>,
@@ -83,6 +86,7 @@ class SettingsViewModel(
     private fun <T> Flow<T>.state(initial: T): StateFlow<T> = stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), initial)
 
     val email = email.state(null)
+    val session = session.state(null)
     val backendUrl = backendUrl.state("")
     val backendStatus: StateFlow<BackendStatus> = backendConnection.status
     val counts = repository.observeSyncCounts().state(SyncCounts())
@@ -114,11 +118,12 @@ class SettingsViewModel(
 }
 
 @Composable
-fun SettingsScreen(onSignedOut: () -> Unit) {
+fun SettingsScreen(onSignedOut: () -> Unit, onSignInToSync: () -> Unit) {
     val viewModel = geoViewModel { c, _ ->
         SettingsViewModel(
             repository = c.treeRepository,
             email = c.sessionStore.session.map { it?.email },
+            session = c.sessionStore.session,
             backendUrl = c.backendConfig.baseUrl,
             lastSyncAt = c.syncPreferences.lastSuccessfulSyncAt,
             basemap = c.basemap(),
@@ -131,6 +136,7 @@ fun SettingsScreen(onSignedOut: () -> Unit) {
         )
     }
     val email by viewModel.email.collectAsStateWithLifecycle()
+    val session by viewModel.session.collectAsStateWithLifecycle()
     val url by viewModel.backendUrl.collectAsStateWithLifecycle()
     val status by viewModel.backendStatus.collectAsStateWithLifecycle()
     val counts by viewModel.counts.collectAsStateWithLifecycle()
@@ -224,6 +230,25 @@ fun SettingsScreen(onSignedOut: () -> Unit) {
 
         SettingsCard("Account") {
             KeyValue("Signed in as", email ?: "—")
+            val current = session
+            val expired = current?.isExpired(System.currentTimeMillis()) == true
+            KeyValue(
+                "Session",
+                when {
+                    current == null -> "—"
+                    expired -> "Expired · sync paused"
+                    current.expiresAtMillis > 0 -> "Valid until ${Formatters.shortDateTime(current.expiresAtMillis)}"
+                    else -> "Valid"
+                },
+            )
+            if (expired) {
+                Button(onClick = onSignInToSync, modifier = Modifier.fillMaxWidth().testTag("settings_signin_to_sync")) { Text("Sign In to Sync") }
+            }
+            Text(
+                "Sign-in lasts 7 days and works offline. Signing out is only needed to switch accounts; trees on this device are kept.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             OutlinedButton(onClick = { confirmSignOut = true }, modifier = Modifier.fillMaxWidth().testTag("settings_sign_out")) { Text("Sign Out") }
         }
 

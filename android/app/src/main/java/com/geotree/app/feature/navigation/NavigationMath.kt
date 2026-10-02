@@ -23,6 +23,8 @@ data class GeoPoint(val latitude: Double, val longitude: Double)
  * - [maxPlausibleSpeedMps]: readings above this are treated as GPS spikes and ignored.
  * - [maxSpeedAccuracyMps] / [maxFixAccuracyForSpeedMeters]: readings worse than this are unreliable.
  * - [speedSmoothing]: weight of the newest reading in the exponential moving average (1 = no smoothing).
+ * - [alignmentToleranceDegrees]: the phone counts as "facing the tree" within ± this of the bearing;
+ *   also the half-width of the grey guide corridor on the navigation compass.
  * - [maxStartFixAgeMillis]: a fix older than this is not used to seed a new session (it could be from
  *   somewhere else entirely and would fake distance or arrival); guidance waits for a fresh fix instead.
  */
@@ -37,6 +39,7 @@ data class NavigationConfig(
     val maxFixAccuracyForSpeedMeters: Double = 50.0,
     val speedSmoothing: Double = 0.5,
     val maxStartFixAgeMillis: Long = 15_000,
+    val alignmentToleranceDegrees: Double = 12.0,
 ) {
     companion object {
         val Default = NavigationConfig()

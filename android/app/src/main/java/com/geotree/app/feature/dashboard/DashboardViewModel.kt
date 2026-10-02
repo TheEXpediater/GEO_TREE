@@ -7,6 +7,10 @@ import com.geotree.app.core.network.BackendStatus
 import com.geotree.app.core.sync.SyncStatusTracker
 import com.geotree.app.core.sync.SyncTrigger
 import com.geotree.app.data.repository.TreeRepository
+import com.geotree.app.core.session.Session
+import com.geotree.app.core.session.SessionState
+import com.geotree.app.core.session.sessionState
+import com.geotree.app.core.sync.authRequired
 import com.geotree.app.feature.locator.map.OfflineMapState
 import com.geotree.app.feature.locator.syncIndicator
 import kotlinx.coroutines.flow.Flow
@@ -36,18 +40,27 @@ class DashboardViewModel(
     lastSyncAt: Flow<Long?>,
     deviceOnline: Flow<Boolean>,
     offlineMap: Flow<OfflineMapState> = flowOf(OfflineMapState.Checking),
+    session: Flow<Session?> = flowOf(null),
+    private val clock: () -> Long = System::currentTimeMillis,
     private val refreshBackend: suspend () -> Unit,
     private val refreshLastKnownFix: suspend () -> Unit = {},
 ) : ViewModel() {
 
     private val gps = MutableStateFlow(gpsAvailability(locationSource.permission(), locationSource.isLocationEnabled()))
 
-    private val local = combine(repository.observeTrees(), repository.observeSyncCounts(), syncTracker.state) { trees, counts, activity ->
+    /** Re-read on every resume so a session that expires while the app is open is noticed. */
+    private val now = MutableStateFlow(clock())
+    private val sessionState = combine(session, now) { s, t -> if (s == null) SessionState.NONE else sessionState(s, t) }
+
+    private val local = combine(repository.observeTrees(), repository.observeSyncCounts(), syncTracker.state, sessionState) { trees, counts, activity, s ->
+        val needsSignIn = authRequired(s, activity)
         DashboardUiState(
             counts = counts,
             recentTrees = recentTrees(trees),
-            sync = syncIndicator(counts, activity),
+            sync = syncIndicator(counts, activity, needsSignIn),
             syncRunning = activity.running,
+            session = s,
+            authRequired = needsSignIn,
         )
     }
 
@@ -70,6 +83,7 @@ class DashboardViewModel(
 
     /** Called whenever the Dashboard becomes visible: permissions or services may have changed. */
     fun refresh() {
+        now.value = clock()
         gps.value = gpsAvailability(locationSource.permission(), locationSource.isLocationEnabled())
         viewModelScope.launch { refreshLastKnownFix() }
         viewModelScope.launch { refreshBackend() }

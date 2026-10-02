@@ -7,6 +7,8 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.geotree.app.core.camera.TreeImageStore
 import com.geotree.app.core.database.GeoTreeDatabase
 import com.geotree.app.core.location.LocationClient
+import com.geotree.app.core.orientation.DeviceHeadingProvider
+import com.geotree.app.core.orientation.HeadingSource
 import com.geotree.app.core.network.ApiProvider
 import com.geotree.app.core.network.BackendConfig
 import com.geotree.app.core.network.BackendConnectionManager
@@ -52,6 +54,9 @@ class AppContainer(context: Context) {
     val authRepository = AuthRepository(apiProvider::api, sessionStore)
 
     val locationClient = LocationClient(appContext)
+
+    /** Phone compass (rotation-vector sensor); registered only while guidance or Heading Up uses it. */
+    val headingSource: HeadingSource = DeviceHeadingProvider(appContext)
     val imageStore = TreeImageStore(appContext)
 
     val syncStatusTracker = SyncStatusTracker()
