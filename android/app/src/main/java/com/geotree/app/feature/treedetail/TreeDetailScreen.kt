@@ -12,6 +12,9 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -31,6 +34,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -43,9 +47,11 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.geotree.app.R
+import com.geotree.app.core.database.LeafAssessmentEntity
 import com.geotree.app.core.database.SyncStatus
 import com.geotree.app.core.database.TreeEntity
 import com.geotree.app.core.design.Formatters
@@ -55,8 +61,13 @@ import com.geotree.app.core.design.TreeImage
 import com.geotree.app.core.design.label
 import com.geotree.app.core.design.tone
 import com.geotree.app.core.sync.SyncScheduler
+import com.geotree.app.data.repository.LeafAssessmentRepository
 import com.geotree.app.data.repository.RenameResult
 import com.geotree.app.data.repository.TreeRepository
+import com.geotree.app.feature.leafassessment.AiAvailability
+import com.geotree.app.feature.leafassessment.AssessmentHistoryCard
+import com.geotree.app.feature.leafassessment.LeafStatusCard
+import com.geotree.app.feature.leafassessment.toAvailability
 import com.geotree.app.feature.tagtree.CoordinateRow
 import com.geotree.app.feature.tagtree.UppercaseTransformation
 import com.geotree.app.geoViewModel
@@ -78,10 +89,27 @@ class TreeDetailViewModel(
     private val repository: TreeRepository,
     private val syncScheduler: SyncScheduler,
     private val treeId: String,
+    private val leafRepository: LeafAssessmentRepository,
 ) : ViewModel() {
     val tree: StateFlow<TreeLoad> = repository.observeTree(treeId)
         .map { if (it == null) TreeLoad.Missing else TreeLoad.Loaded(it) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TreeLoad.Loading)
+
+    /** Every leaf scan of this tree, newest first, from Room (works offline). */
+    val assessmentHistory: StateFlow<List<LeafAssessmentEntity>> = leafRepository.observeHistory(treeId)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** Current leaf status: derived from the newest scan with a result, never stored on the tree. */
+    val latestResult: StateFlow<LeafAssessmentEntity?> = leafRepository.observeLatestResult(treeId)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    private val _aiAvailability = MutableStateFlow<AiAvailability>(AiAvailability.Checking)
+    val aiAvailability: StateFlow<AiAvailability> = _aiAvailability.asStateFlow()
+
+    /** Best effort and informational: the tree screen never waits for the AI server. */
+    fun refreshAiAvailability() {
+        viewModelScope.launch { _aiAvailability.value = leafRepository.aiStatus().toAvailability() }
+    }
 
     private val _renameError = MutableStateFlow<String?>(null)
     val renameError: StateFlow<String?> = _renameError.asStateFlow()
@@ -104,13 +132,34 @@ class TreeDetailViewModel(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
-fun TreeDetailScreen(treeId: String, onBack: () -> Unit, onCenterOnMap: (String) -> Unit, onNavigate: (String) -> Unit) {
-    val viewModel = geoViewModel(key = "tree_$treeId") { c, _ -> TreeDetailViewModel(c.treeRepository, c.syncScheduler, treeId) }
+fun TreeDetailScreen(
+    treeId: String,
+    onBack: () -> Unit,
+    onCenterOnMap: (String) -> Unit,
+    onNavigate: (String) -> Unit,
+    onAssessLeaf: (String) -> Unit,
+    onOpenAssessment: (String) -> Unit,
+    /** True when returning from a result page via "View History". */
+    scrollToHistory: Boolean = false,
+    onScrolledToHistory: () -> Unit = {},
+) {
+    val viewModel = geoViewModel(key = "tree_$treeId") { c, _ ->
+        TreeDetailViewModel(c.treeRepository, c.syncScheduler, treeId, c.leafAssessmentRepository)
+    }
     val load by viewModel.tree.collectAsStateWithLifecycle()
     val renameError by viewModel.renameError.collectAsStateWithLifecycle()
+    val history by viewModel.assessmentHistory.collectAsStateWithLifecycle()
+    val latestResult by viewModel.latestResult.collectAsStateWithLifecycle()
+    val aiAvailability by viewModel.aiAvailability.collectAsStateWithLifecycle()
+    val historyRequester = remember { BringIntoViewRequester() }
     var renaming by remember { mutableStateOf(false) }
+
+    LifecycleResumeEffect(Unit) {
+        viewModel.refreshAiAvailability()
+        onPauseOrDispose { }
+    }
 
     Scaffold(
         topBar = {
@@ -132,6 +181,26 @@ fun TreeDetailScreen(treeId: String, onBack: () -> Unit, onCenterOnMap: (String)
                 onNavigate = { onNavigate(state.tree.id) },
                 onRetrySync = viewModel::retrySync,
                 onRename = { renaming = true },
+                leafSection = {
+                    LeafStatusCard(
+                        latest = latestResult,
+                        assessmentCount = history.size,
+                        availability = aiAvailability,
+                        onAssess = { onAssessLeaf(state.tree.id) },
+                        onOpenLatest = onOpenAssessment,
+                    )
+                    AssessmentHistoryCard(
+                        history = history,
+                        onOpen = onOpenAssessment,
+                        modifier = Modifier.bringIntoViewRequester(historyRequester),
+                    )
+                    LaunchedEffect(scrollToHistory) {
+                        if (scrollToHistory) {
+                            historyRequester.bringIntoView()
+                            onScrolledToHistory()
+                        }
+                    }
+                },
                 modifier = Modifier.padding(padding),
             )
         }
@@ -167,6 +236,7 @@ private fun TreeDetailContent(
     onNavigate: () -> Unit,
     onRetrySync: () -> Unit,
     onRename: () -> Unit,
+    leafSection: @Composable () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -244,16 +314,7 @@ private fun TreeDetailContent(
             }
         }
 
-        OutlinedCard(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("Leaf Assessment", style = MaterialTheme.typography.titleMedium)
-                Text(
-                    "Coming in the next milestone. Leaf-disease assessment is not part of this build.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
+        leafSection()
 
         Text(
             "Record ID ${tree.id}" + (tree.serverVersion?.let { " · server v$it" } ?: ""),

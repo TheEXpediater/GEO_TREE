@@ -59,7 +59,8 @@ if ($LASTEXITCODE -ne 0) {
 }
 Write-Step 'Docker engine is running'
 
-# 3. Start services. Named volumes (geo_tree_mongodb_data, geo_tree_uploads) are reused, never removed.
+# 3. Start services. Named volumes (geo_tree_mongodb_data, geo_tree_uploads, geo_tree_ai_data) are reused, never removed.
+#    The first build also installs CPU PyTorch for leaf assessment (a few minutes, once).
 Write-Step 'docker compose up -d --build'
 cmd /c 'docker compose up -d --build'
 if ($LASTEXITCODE -ne 0) {
@@ -105,7 +106,10 @@ try {
 
 Write-Host ''
 Write-Host 'GEO Tree Backend Ready' -ForegroundColor Green
-Write-Host "  API $($health.version), database $($health.database)"
+Write-Host "  API $($health.version), database $($health.database), leaf assessment AI $($health.ai)"
+if ($health.ai -eq 'enabled') {
+    Write-Host '  DINOv2 ViT-S/14 loads in the background (first start downloads ~85 MB into the geo_tree_ai_data volume).' -ForegroundColor DarkGray
+}
 Write-Host ''
 Write-Host 'Local:'
 Write-Host "  http://localhost:$port"

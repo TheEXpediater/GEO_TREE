@@ -18,6 +18,8 @@ class GeoTreeApplication : Application(), ImageLoaderFactory {
         container = AppContainer(this)
         // Also covers a process restored straight onto the Map, which skips the Splash screen.
         CoroutineScope(SupervisorJob() + Dispatchers.Default).launch { container.offlineMapInstaller.ensureInstalled() }
+        // A leaf scan whose request died with the previous process is kept as a FAILED history entry.
+        container.applicationScope.launch { container.leafAssessmentRepository.failInterrupted() }
     }
 
     /** Coil shares the API's OkHttp client so server images carry the session token. */

@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse
 from app.auth.dependencies import get_current_user, get_settings
 from app.config import Settings
 from app.errors import ApiError
-from app.services.image_storage import resolve_image
+from app.services.image_storage import ASSESSMENT_SUBDIR, resolve_image
 
 router = APIRouter(prefix="/uploads", tags=["uploads"])
 
@@ -22,6 +22,18 @@ def tree_image(
     _: dict[str, Any] = Depends(get_current_user),
 ) -> FileResponse:
     path = resolve_image(settings.upload_dir, filename)
+    if path is None:
+        raise ApiError(404, "IMAGE_NOT_FOUND", "Image not found.")
+    return FileResponse(path, media_type=_MEDIA_TYPES[path.suffix.lstrip(".")])
+
+
+@router.get("/leaf_assessments/{filename}")
+def leaf_assessment_image(
+    filename: str,
+    settings: Settings = Depends(get_settings),
+    _: dict[str, Any] = Depends(get_current_user),
+) -> FileResponse:
+    path = resolve_image(settings.upload_dir, filename, ASSESSMENT_SUBDIR)
     if path is None:
         raise ApiError(404, "IMAGE_NOT_FOUND", "Image not found.")
     return FileResponse(path, media_type=_MEDIA_TYPES[path.suffix.lstrip(".")])

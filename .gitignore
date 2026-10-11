@@ -55,3 +55,18 @@ backend/atlas-credentials.*
 .env
 *.env.local
 GEO_Tree_Test.zip
+
+# AI runtime data: dataset images, cached DINOv2 features, model artifacts, weight caches,
+# and the temporary local batch-test folders (never commit)
+backend/ai_data/
+backend/ai_cache/
+ai_test_input/
+ai_test_results/
+*.pt
+*.pth
+*.onnx
+*.npy
+*.npz
+
+# APK release staging (tools/distribution/prepare_release.py)
+tools/distribution/release/

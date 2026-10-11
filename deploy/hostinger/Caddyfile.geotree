@@ -1,0 +1,8 @@
+
+# --- GEO Tree (separate app, /opt/geotree; added after the museum site, which is unchanged) ---
+# Caddy reaches geo-tree-api over the geo-tree-network Docker network
+# (docker network connect geo-tree-network museum-guide-caddy-prod).
+geotree.museuma7k9x3.tech {
+	encode gzip
+	reverse_proxy geo-tree-api:8000
+}

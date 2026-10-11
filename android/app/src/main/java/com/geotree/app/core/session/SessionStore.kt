@@ -9,13 +9,24 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
-data class Session(val accessToken: String, val email: String, val expiresAtMillis: Long) {
+/**
+ * [role] is the server-assigned role ("ADMIN" for the development admin). It is null for a
+ * session stored before roles existed until the profile is refreshed from /auth/me.
+ */
+data class Session(val accessToken: String, val email: String, val expiresAtMillis: Long, val role: String? = null) {
+    /** Shows admin-only entry points. The server still enforces the role on every admin request. */
+    val isAdmin: Boolean get() = role == ROLE_ADMIN
+
     /**
      * True once the server-issued expiry (JWT `exp`, 7 days after sign-in) has passed on this
      * device's clock. An unknown expiry (<= 0) is not treated as expired: the server still
      * rejects a bad token with 401, which sync reports as "sign in to sync".
      */
     fun isExpired(nowMillis: Long): Boolean = expiresAtMillis in 1..nowMillis
+
+    companion object {
+        const val ROLE_ADMIN = "ADMIN"
+    }
 }
 
 /**
@@ -53,8 +64,17 @@ class SessionStore(private val dataStore: DataStore<Preferences>) {
             it[TOKEN] = session.accessToken
             it[EMAIL] = session.email
             it[EXPIRES_AT] = session.expiresAtMillis
+            if (session.role != null) it[ROLE] = session.role else it.remove(ROLE)
         }
         cachedToken = session.accessToken
+    }
+
+    /** Updates the role of the stored session, only if it still belongs to [accessToken]. */
+    suspend fun updateRole(accessToken: String, role: String?) {
+        dataStore.edit {
+            if (it[TOKEN] != accessToken) return@edit
+            if (role != null) it[ROLE] = role else it.remove(ROLE)
+        }
     }
 
     suspend fun clear() {
@@ -62,18 +82,20 @@ class SessionStore(private val dataStore: DataStore<Preferences>) {
             it.remove(TOKEN)
             it.remove(EMAIL)
             it.remove(EXPIRES_AT)
+            it.remove(ROLE)
         }
         cachedToken = null
     }
 
     private fun Preferences.toSession(): Session? {
         val token = this[TOKEN] ?: return null
-        return Session(token, this[EMAIL].orEmpty(), this[EXPIRES_AT] ?: 0L)
+        return Session(token, this[EMAIL].orEmpty(), this[EXPIRES_AT] ?: 0L, this[ROLE])
     }
 
     private companion object {
         val TOKEN = stringPreferencesKey("session_access_token")
         val EMAIL = stringPreferencesKey("session_email")
         val EXPIRES_AT = longPreferencesKey("session_expires_at")
+        val ROLE = stringPreferencesKey("session_role")
     }
 }

@@ -36,3 +36,17 @@ def get_current_user(
     if user is None:
         raise ApiError(401, "UNAUTHORIZED", "User no longer exists.")
     return user
+
+
+def require_admin(user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
+    if user.get("role") != user_repository.ROLE_ADMIN:
+        raise ApiError(403, "ADMIN_REQUIRED", "Administrator access is required.")
+    return user
+
+
+def get_ai_service(request: Request) -> Any:
+    """The AI service, or 503 when this server runs without the AI subsystem (AI_ENABLED=false)."""
+    service = getattr(request.app.state, "ai", None)
+    if service is None:
+        raise ApiError(503, "AI_DISABLED", "Leaf assessment is not enabled on this server. Use the local GEO Tree AI backend.")
+    return service

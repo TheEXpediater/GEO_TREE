@@ -58,14 +58,45 @@ class LoginViewModelTest {
     )
 
     @Test
-    fun `debug build prefills development credentials`() {
+    fun `debug build prefills the email from the Gradle property`() {
         assertTrue(BuildConfig.DEBUG)
         assertEquals("admin@gmail.com", BuildConfig.DEV_EMAIL)
-        assertEquals("admin123", BuildConfig.DEV_PASSWORD)
         val state = viewModel(BuildConfig.DEV_EMAIL, BuildConfig.DEV_PASSWORD).state.value
         assertEquals("admin@gmail.com", state.email)
-        assertEquals("admin123", state.password)
+        // The password comes only from -Pgeotree.prefillPassword (empty when not supplied).
+        assertEquals(BuildConfig.DEV_PASSWORD, state.password)
         assertFalse(state.passwordVisible)
+    }
+
+    @Test
+    fun `local default debug build prefills the development password`() {
+        // CLAUDE.md: debug builds against the local backend prefill admin123; hosted builds do not.
+        assertEquals("http://10.0.2.2:8000", BuildConfig.DEFAULT_BASE_URL)
+        assertEquals("admin123", BuildConfig.DEV_PASSWORD)
+        assertEquals("admin123", viewModel(BuildConfig.DEV_EMAIL, BuildConfig.DEV_PASSWORD).state.value.password)
+    }
+
+    @Test
+    fun `prefilled credentials are never submitted automatically`() = runTest(dispatcher) {
+        val vm = viewModel("admin@gmail.com", "supplied-by-gradle-property")
+        vm.awaitIdle()
+
+        assertEquals("supplied-by-gradle-property", vm.state.value.password)
+        assertFalse(vm.state.value.isLoading)
+        assertEquals(0, afterSignInCalls)
+        assertNull(sessionStore.current())
+    }
+
+    @Test
+    fun `missing password property leaves the field empty and asks for it`() = runTest(dispatcher) {
+        val vm = viewModel("admin@gmail.com", "")
+        assertEquals("", vm.state.value.password)
+
+        vm.submit()
+        vm.awaitIdle()
+
+        assertNotNull(vm.state.value.passwordError)
+        assertEquals(0, afterSignInCalls)
     }
 
     @Test

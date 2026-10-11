@@ -18,7 +18,11 @@ services:
       start_period: 20s
 
   backend:
-    build: ./backend
+    build:
+      context: ./backend
+      args:
+        # The local backend includes the DINOv2 leaf-assessment runtime (CPU PyTorch).
+        INSTALL_AI: "true"
     container_name: geo-tree-backend
     restart: unless-stopped
     depends_on:
@@ -30,13 +34,29 @@ services:
       MONGO_DATABASE: geo_tree
       JWT_SECRET: ${GEO_TREE_JWT_SECRET:-}
       UPLOAD_DIR: /app/uploads
+      # Tamarind leaf assessment (frozen DINOv2 + classifier head). See README "Leaf assessment (AI)".
+      AI_ENABLED: "true"
+      AI_DATA_DIR: /app/ai_data
+      DINOV2_MODEL: ${DINOV2_MODEL:-dinov2_vits14}
+      DINOV2_DEVICE: ${DINOV2_DEVICE:-auto}
+      DINOV2_IMAGE_SIZE: ${DINOV2_IMAGE_SIZE:-336}
+      DINOV2_BATCH_SIZE: ${DINOV2_BATCH_SIZE:-4}
+      DINOV2_NUM_WORKERS: ${DINOV2_NUM_WORKERS:-0}
+      AI_MIN_IMAGES_PER_CLASS: ${AI_MIN_IMAGES_PER_CLASS:-10}
+      AI_VALIDATION_FRACTION: ${AI_VALIDATION_FRACTION:-0.2}
+      AI_RETRAIN_DEBOUNCE_SECONDS: ${AI_RETRAIN_DEBOUNCE_SECONDS:-15}
+      AI_CONFIDENCE_THRESHOLD: ${AI_CONFIDENCE_THRESHOLD:-0.6}
     ports:
       - "${GEO_TREE_API_HOST_PORT:-8000}:8000"
     volumes:
       - geo_tree_uploads:/app/uploads
+      # Dataset images, cached DINOv2 features, model versions and the DINOv2 weight cache.
+      - geo_tree_ai_data:/app/ai_data
 
 volumes:
   geo_tree_mongodb_data:
     name: geo_tree_mongodb_data
   geo_tree_uploads:
     name: geo_tree_uploads
+  geo_tree_ai_data:
+    name: geo_tree_ai_data

@@ -1,0 +1,112 @@
+# GEO Tree production stack on the shared Hostinger VPS (the museum app runs on the same server).
+#
+# Lives in /opt/geotree (never under /opt/museum-app). Run every command from /opt/geotree so the
+# sibling .env is used:   docker compose -p geo_tree_prod ps
+#
+#   Internet → museum Caddy (ports 80/443, owned by the museum stack)
+#            → geo-tree-network → geo-tree-api:8000      (only service Caddy can reach)
+#            → geo-tree-internal (internal: true) → geo-tree-mongodb   (no route to the internet)
+#
+# No service publishes a host port. DINOv2 runs inside geo-tree-api (one AI process, never exposed
+# on its own). Memory/CPU are capped and GEO Tree is the preferred out-of-memory victim, so a
+# shortage hits GEO Tree before the museum. The memory guard defers DINOv2 work when the host is low.
+
+name: geo_tree_prod
+
+services:
+  geo-tree-mongodb:
+    # Same image the server already has (shared read-only layers); its own volume and network.
+    image: mongodb/mongodb-community-server:7.0-ubuntu2204
+    container_name: geo-tree-mongodb
+    command: ["mongod", "--bind_ip_all", "--wiredTigerCacheSizeGB", "0.25"]
+    volumes:
+      - geo_tree_mongodb_data:/data/db
+    networks:
+      - geo-tree-internal
+    restart: unless-stopped
+    mem_limit: 640m
+    memswap_limit: 640m
+    oom_score_adj: 300
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  geo-tree-api:
+    build:
+      context: ./source/backend
+      args:
+        INSTALL_AI: "true"
+    image: geo_tree_prod-api:latest
+    container_name: geo-tree-api
+    depends_on:
+      geo-tree-mongodb:
+        condition: service_healthy
+    environment:
+      ENVIRONMENT: production
+      JWT_SECRET: ${GEO_TREE_JWT_SECRET:?set GEO_TREE_JWT_SECRET in /opt/geotree/.env}
+      MONGO_URI: mongodb://geo-tree-mongodb:27017
+      MONGO_DATABASE: geo_tree
+      UPLOAD_DIR: /app/uploads
+      DISTRIBUTION_DIR: /app/distribution
+      AI_ENABLED: "true"
+      AI_DATA_DIR: /app/ai_data
+      DINOV2_MODEL: dinov2_vits14
+      DINOV2_DEVICE: cpu
+      DINOV2_IMAGE_SIZE: "336"
+      DINOV2_BATCH_SIZE: "4"
+      DINOV2_NUM_WORKERS: "0"
+      # Load DINOv2 on first use instead of at start: no resident model until it is needed.
+      AI_PRELOAD_BACKBONE: "false"
+      AI_MIN_IMAGES_PER_CLASS: "10"
+      AI_VALIDATION_FRACTION: "0.2"
+      AI_RETRAIN_DEBOUNCE_SECONDS: "15"
+      AI_CONFIDENCE_THRESHOLD: "0.6"
+      # Memory guard (backend/app/ai/resources.py), two independent checks:
+      #  host free memory: defer feature extraction/training below 1500 MB, AI_BUSY below 500 MB;
+      #  container headroom below its own 1536 MB limit (reclaimable cache excluded): 700 MB for
+      #  training (a fresh DINOv2 load peaks ~600 MB), 300 MB for one assessment (model resident).
+      AI_TRAINING_MIN_FREE_MB: "1500"
+      AI_INFERENCE_MIN_FREE_MB: "500"
+      AI_CONTAINER_MIN_HEADROOM_MB: "700"
+      AI_CONTAINER_INFERENCE_HEADROOM_MB: "300"
+      # 2 vCPUs are shared with the museum: keep PyTorch to one thread.
+      OMP_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+    volumes:
+      - geo_tree_uploads:/app/uploads          # tree_images/ and leaf_assessments/
+      - geo_tree_ai_data:/app/ai_data          # classifier_images/, embeddings/, models/, model_cache/
+      - ./distribution:/app/distribution:ro    # download page + current APK
+    networks:
+      - geo-tree-network
+      - geo-tree-internal
+    restart: unless-stopped
+    mem_limit: 1536m
+    memswap_limit: 1536m
+    cpus: 1.0
+    oom_score_adj: 500
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=5).read()"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 40s
+
+networks:
+  # The museum Caddy is attached to this network (docker network connect); nothing else is.
+  geo-tree-network:
+    name: geo-tree-network
+  # API ↔ MongoDB only, no internet access.
+  geo-tree-internal:
+    name: geo-tree-internal
+    internal: true
+
+volumes:
+  geo_tree_mongodb_data:
+    name: geo_tree_mongodb_data
+  geo_tree_uploads:
+    name: geo_tree_uploads
+  geo_tree_ai_data:
+    name: geo_tree_ai_data

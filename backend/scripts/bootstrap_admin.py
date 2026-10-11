@@ -49,7 +49,9 @@ def validate(email: str, password: str, production: bool) -> None:
 def bootstrap_admin(db: Database, email: str, password: str, production: bool = True) -> bool:
     """Create the admin if missing. Returns True when created, False when it already existed."""
     validate(email, password, production)
-    return user_repository.create_if_missing(db, email, hash_password(password), display_name="GEO Tree Admin")
+    return user_repository.create_if_missing(
+        db, email, hash_password(password), display_name="GEO Tree Admin", role=user_repository.ROLE_ADMIN
+    )
 
 
 def main() -> int:

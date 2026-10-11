@@ -114,6 +114,8 @@ fun CameraCaptureScreen(
     imageStore: TreeImageStore,
     onCaptured: (File) -> Unit,
     onClose: () -> Unit,
+    hint: String = "Frame the whole tree, trunk to crown",
+    captureDescription: String = "Capture tree image",
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -161,7 +163,7 @@ fun CameraCaptureScreen(
                     modifier = Modifier.background(Color.Black.copy(alpha = 0.6f), MaterialTheme.shapes.small).padding(12.dp),
                 )
             } else {
-                Text("Frame the whole tree, trunk to crown", color = Color.White, style = MaterialTheme.typography.bodyMedium)
+                Text(hint, color = Color.White, style = MaterialTheme.typography.bodyMedium)
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 FilledIconButton(
@@ -170,7 +172,7 @@ fun CameraCaptureScreen(
                     modifier = Modifier
                         .size(76.dp)
                         .border(4.dp, Color.White, CircleShape)
-                        .semantics { contentDescription = "Capture tree image" },
+                        .semantics { contentDescription = captureDescription },
                     colors = IconButtonDefaults.filledIconButtonColors(containerColor = Color.White.copy(alpha = 0.25f), contentColor = Color.White),
                 ) {
                     if (capturing) CircularProgressIndicator(color = Color.White, modifier = Modifier.size(28.dp))

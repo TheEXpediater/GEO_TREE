@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import FastAPI
 from pymongo.database import Database
@@ -9,14 +10,30 @@ from pymongo.database import Database
 from app.config import Settings, load_settings
 from app.database.mongo import create_client, ensure_indexes
 from app.errors import install_error_handlers
-from app.routes import auth, health, trees, uploads
+from app.routes import admin_classifiers, ai, auth, download, health, leaf_assessments, trees, uploads
 from app.services.seed import seed_dev_admin
 
 logger = logging.getLogger("geo_tree")
 
 
-def create_app(settings: Settings | None = None, database: Database | None = None) -> FastAPI:
-    """Build the app. Tests pass an isolated ``database``; otherwise MongoDB is opened from settings."""
+def _create_ai_service(db: Database, settings: Settings, feature_extractor: Any) -> Any:
+    # Imported lazily: servers with AI_ENABLED=false never need NumPy, Pillow or PyTorch.
+    from app.ai.features import Dinov2FeatureExtractor
+    from app.ai.service import AiService
+
+    extractor = feature_extractor or Dinov2FeatureExtractor(settings.ai)
+    service = AiService(db, settings.ai, extractor, settings.max_image_bytes)
+    service.start(seed_default_classes=settings.is_development)
+    logger.info(
+        "AI enabled: %s, image %dpx, device=%s, data %s",
+        settings.ai.model_name, settings.ai.image_size, settings.ai.device, settings.ai.data_dir,
+    )
+    return service
+
+
+def create_app(settings: Settings | None = None, database: Database | None = None, feature_extractor: Any = None) -> FastAPI:
+    """Build the app. Tests pass an isolated ``database`` (and a fake ``feature_extractor``);
+    otherwise MongoDB is opened from settings and DINOv2 is loaded when AI is enabled."""
     settings = settings or load_settings()
 
     @asynccontextmanager
@@ -31,15 +48,22 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
         seed_dev_admin(db, settings)
         app.state.db = db
         app.state.settings = settings
+        app.state.ai = _create_ai_service(db, settings, feature_extractor) if settings.ai.enabled else None
         logger.info("GEO Tree API ready (environment=%s, database=%s)", settings.environment, db.name)
         yield
+        if app.state.ai is not None:
+            app.state.ai.stop()
         if client is not None:
             client.close()
 
-    app = FastAPI(title="GEO Tree API", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="GEO Tree API", version="0.2.0", lifespan=lifespan)
     install_error_handlers(app)
     app.include_router(health.router)
     app.include_router(auth.router)
     app.include_router(trees.router)
+    app.include_router(leaf_assessments.router)
     app.include_router(uploads.router)
+    app.include_router(download.router)
+    app.include_router(admin_classifiers.router)
+    app.include_router(ai.router)
     return app

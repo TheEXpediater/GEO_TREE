@@ -14,6 +14,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
@@ -29,7 +30,11 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.navigation
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.geotree.app.feature.classifiers.ClassImagesScreen
+import com.geotree.app.feature.classifiers.ClassifiersScreen
 import com.geotree.app.feature.dashboard.DashboardScreen
+import com.geotree.app.feature.leafassessment.AssessmentDetailScreen
+import com.geotree.app.feature.leafassessment.LeafAssessmentScreen
 import com.geotree.app.feature.locator.LocatorScreen
 import com.geotree.app.feature.login.LoginScreen
 import com.geotree.app.feature.settings.SettingsScreen
@@ -54,6 +59,21 @@ private object Routes {
     const val TAG_TREE = "tag_tree"
     const val TREE_DETAIL = "tree/{id}"
     fun treeDetail(id: String) = "tree/$id"
+
+    const val LEAF_ASSESSMENT = "tree/{id}/leaf"
+    fun leafAssessment(id: String) = "tree/$id/leaf"
+
+    /** One scan by its stable id: the result page right after a scan, or a read-only history entry. */
+    const val ASSESSMENT = "assessment/{assessmentId}?result={result}"
+    fun assessment(assessmentId: String, asResult: Boolean = false) = "assessment/$assessmentId?result=$asResult"
+
+    /** One-shot request on the Tree Detail entry: scroll to its history (from "View History"). */
+    const val SCROLL_TO_HISTORY_KEY = "scroll_to_history"
+
+    /** Admin → Classifiers (entered from Settings; shown only to the ADMIN role). */
+    const val CLASSIFIERS = "admin/classifiers"
+    const val CLASS_IMAGES = "admin/classifiers/{classId}"
+    fun classImages(classId: String) = "admin/classifiers/$classId"
 
     /** One-shot requests for the Map, stored on the MAIN graph entry (always on the back stack while signed in). */
     const val FOCUS_TREE_KEY = "focus_tree_id"
@@ -147,6 +167,7 @@ fun GeoTreeNavHost(modifier: Modifier = Modifier) {
                     SettingsScreen(
                         onSignedOut = { navController.navigate(Routes.LOGIN) { popUpTo(Routes.MAIN) { inclusive = true } } },
                         onSignInToSync = { navController.navigate(Routes.REAUTH) },
+                        onOpenClassifiers = { navController.navigate(Routes.CLASSIFIERS) },
                     )
                 }
             }
@@ -165,6 +186,7 @@ fun GeoTreeNavHost(modifier: Modifier = Modifier) {
                 )
             }
             composable(Routes.TREE_DETAIL, arguments = listOf(navArgument("id") { type = NavType.StringType })) { entry ->
+                val scrollToHistory by entry.savedStateHandle.getStateFlow(Routes.SCROLL_TO_HISTORY_KEY, false).collectAsStateWithLifecycle()
                 TreeDetailScreen(
                     treeId = requireNotNull(entry.arguments?.getString("id")),
                     onBack = { navController.popBackStack() },
@@ -178,7 +200,55 @@ fun GeoTreeNavHost(modifier: Modifier = Modifier) {
                         navController.popBackStack()
                         navController.navigateToTab(Routes.MAP)
                     },
+                    onAssessLeaf = { id -> navController.navigate(Routes.leafAssessment(id)) },
+                    onOpenAssessment = { assessmentId -> navController.navigate(Routes.assessment(assessmentId)) },
+                    scrollToHistory = scrollToHistory,
+                    onScrolledToHistory = { entry.savedStateHandle[Routes.SCROLL_TO_HISTORY_KEY] = false },
                 )
+            }
+            composable(Routes.LEAF_ASSESSMENT, arguments = listOf(navArgument("id") { type = NavType.StringType })) { entry ->
+                LeafAssessmentScreen(
+                    treeId = requireNotNull(entry.arguments?.getString("id")),
+                    onBack = { navController.popBackStack() },
+                    // Tree Detail → Assess Leaf → Result: the capture screen is replaced, so Back returns to the tree.
+                    onStarted = { assessmentId ->
+                        navController.navigate(Routes.assessment(assessmentId, asResult = true)) {
+                            popUpTo(Routes.LEAF_ASSESSMENT) { inclusive = true }
+                        }
+                    },
+                )
+            }
+            composable(
+                Routes.ASSESSMENT,
+                arguments = listOf(
+                    navArgument("assessmentId") { type = NavType.StringType },
+                    navArgument("result") { type = NavType.BoolType; defaultValue = false },
+                ),
+            ) { entry ->
+                AssessmentDetailScreen(
+                    assessmentId = requireNotNull(entry.arguments?.getString("assessmentId")),
+                    asResult = entry.arguments?.getBoolean("result") == true,
+                    onBack = { navController.popBackStack() },
+                    onViewHistory = {
+                        navController.previousBackStackEntry?.savedStateHandle?.set(Routes.SCROLL_TO_HISTORY_KEY, true)
+                        navController.popBackStack()
+                    },
+                    // "Assess again" is a new scan: its result page replaces this one.
+                    onOpenAssessment = { newId ->
+                        navController.navigate(Routes.assessment(newId, asResult = true)) {
+                            popUpTo(Routes.ASSESSMENT) { inclusive = true }
+                        }
+                    },
+                )
+            }
+            composable(Routes.CLASSIFIERS) {
+                ClassifiersScreen(
+                    onBack = { navController.popBackStack() },
+                    onOpenClass = { classId -> navController.navigate(Routes.classImages(classId)) },
+                )
+            }
+            composable(Routes.CLASS_IMAGES, arguments = listOf(navArgument("classId") { type = NavType.StringType })) { entry ->
+                ClassImagesScreen(classId = requireNotNull(entry.arguments?.getString("classId")), onBack = { navController.popBackStack() })
             }
         }
     }

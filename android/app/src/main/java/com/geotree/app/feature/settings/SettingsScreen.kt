@@ -49,6 +49,8 @@ import com.geotree.app.core.sync.SyncScheduler
 import com.geotree.app.data.repository.AuthRepository
 import com.geotree.app.data.repository.SyncCounts
 import com.geotree.app.data.repository.TreeRepository
+import com.geotree.app.feature.admin.AdminSection
+import com.geotree.app.feature.admin.adminSectionVisible
 import com.geotree.app.feature.dashboard.coverageText
 import com.geotree.app.feature.dashboard.display
 import com.geotree.app.feature.dashboard.offlineMapStatusLabel
@@ -97,6 +99,11 @@ class SettingsViewModel(
         viewModelScope.launch { backendConnection.refreshStatus() }
     }
 
+    /** Picks up the account role (admin tools) for sessions saved before roles existed. */
+    fun refreshProfile() {
+        viewModelScope.launch { authRepository.refreshProfile() }
+    }
+
     fun syncNow() {
         syncScheduler.requestSync(replace = true)
         refreshBackend()
@@ -118,7 +125,7 @@ class SettingsViewModel(
 }
 
 @Composable
-fun SettingsScreen(onSignedOut: () -> Unit, onSignInToSync: () -> Unit) {
+fun SettingsScreen(onSignedOut: () -> Unit, onSignInToSync: () -> Unit, onOpenClassifiers: () -> Unit) {
     val viewModel = geoViewModel { c, _ ->
         SettingsViewModel(
             repository = c.treeRepository,
@@ -148,6 +155,7 @@ fun SettingsScreen(onSignedOut: () -> Unit, onSignInToSync: () -> Unit) {
 
     LifecycleResumeEffect(Unit) {
         viewModel.refreshBackend()
+        viewModel.refreshProfile()
         onPauseOrDispose { }
     }
 
@@ -226,6 +234,10 @@ fun SettingsScreen(onSignedOut: () -> Unit, onSignInToSync: () -> Unit) {
             KeyValue("Mode", "Direct line to tree (not road routing)")
             KeyValue("Arrival radius", String.format(Locale.US, "%.0f m", config.arrivalRadiusMeters))
             KeyValue("Walking estimate pace", String.format(Locale.US, "%.1f km/h", config.walkingSpeedMps * 3.6))
+        }
+
+        if (adminSectionVisible(session)) {
+            AdminSection(onOpenClassifiers = onOpenClassifiers)
         }
 
         SettingsCard("Account") {

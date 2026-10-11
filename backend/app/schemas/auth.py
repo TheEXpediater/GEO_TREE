@@ -13,6 +13,7 @@ class LoginRequest(BaseModel):
 class UserOut(BaseModel):
     email: str
     display_name: str
+    role: str | None = None
 
 
 class LoginResponse(BaseModel):

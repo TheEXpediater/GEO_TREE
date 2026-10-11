@@ -1,5 +1,6 @@
 package com.geotree.app.core.sync
 
+import com.geotree.app.core.database.LeafAssessmentEntity
 import com.geotree.app.core.database.TreeEntity
 import com.geotree.app.core.session.SessionState
 import com.geotree.app.core.session.SessionStore
@@ -7,6 +8,7 @@ import com.geotree.app.data.remote.GeoTreeApi
 import com.geotree.app.data.remote.TreeDto
 import com.geotree.app.data.remote.toApiError
 import com.geotree.app.data.remote.toSyncRequest
+import com.geotree.app.data.repository.LeafAssessmentRepository
 import com.geotree.app.data.repository.TreeRepository
 import java.io.File
 import java.io.IOException
@@ -29,7 +31,14 @@ sealed interface SyncOutcome {
     data class BackendUnavailable(val reason: String) : SyncOutcome
     /** The connection dropped mid-sync. Worth retrying with backoff. */
     data class Interrupted(val reason: String, val pushed: Int) : SyncOutcome
-    data class Completed(val pushed: Int, val rejected: Int, val pulled: Int, val blockedTreeCode: String?) : SyncOutcome
+    data class Completed(
+        val pushed: Int,
+        val rejected: Int,
+        val pulled: Int,
+        val blockedTreeCode: String?,
+        val assessmentsPushed: Int = 0,
+        val assessmentsPulled: Int = 0,
+    ) : SyncOutcome
 }
 
 data class SyncActivity(
@@ -59,6 +68,8 @@ class SyncStatusTracker(private val clock: () -> Long = System::currentTimeMilli
  *  1. health check (the dev server may be on a LAN, so "connected" is not enough)
  *  2. push PENDING/FAILED trees by UUID (SYNCING → SYNCED / FAILED), uploading images
  *  3. pull changes after the stored server_version cursor and upsert them into Room
+ *  4. leaf assessment history: push finished scans by assessment UUID (photo uploaded once),
+ *     then pull scans from other devices after their own server_version cursor
  * Local records are never deleted by a failure.
  */
 class SyncEngine(
@@ -68,6 +79,8 @@ class SyncEngine(
     private val preferences: SyncPreferences,
     private val tracker: SyncStatusTracker,
     private val clock: () -> Long = System::currentTimeMillis,
+    /** Leaf assessment history; null where it is not wired (keeps tree-only tests simple). */
+    private val leafAssessments: LeafAssessmentRepository? = null,
 ) {
     private val mutex = Mutex()
 
@@ -103,20 +116,20 @@ class SyncEngine(
         }
 
         var pulled = 0
+        var blockedTreeCode: String? = null
         var after = preferences.lastPulledServerVersion()
         try {
-            repeat(MAX_PULL_PAGES) {
-                val page = api.changes(after)
-                if (page.items.isEmpty()) return SyncOutcome.Completed(pushed, rejected, pulled, null)
-                val applied = repository.applyRemoteChanges(page.items)
+            for (page in 1..MAX_PULL_PAGES) {
+                val changes = api.changes(after)
+                if (changes.items.isEmpty()) break
+                val applied = repository.applyRemoteChanges(changes.items)
                 applied.appliedThroughVersion?.let { version ->
-                    pulled += page.items.count { it.serverVersion <= version }
+                    pulled += changes.items.count { it.serverVersion <= version }
                     preferences.setLastPulledServerVersion(version)
                     after = version
                 }
-                if (applied.blockedTreeCode != null || !page.hasMore) {
-                    return SyncOutcome.Completed(pushed, rejected, pulled, applied.blockedTreeCode)
-                }
+                blockedTreeCode = applied.blockedTreeCode
+                if (blockedTreeCode != null || !changes.hasMore) break
             }
         } catch (e: HttpException) {
             if (e.code() == 401) return SyncOutcome.AuthExpired
@@ -124,7 +137,95 @@ class SyncEngine(
         } catch (e: IOException) {
             return SyncOutcome.Interrupted("Pull interrupted: ${e.message}", pushed)
         }
-        return SyncOutcome.Completed(pushed, rejected, pulled, null)
+
+        val assessments = leafAssessments ?: return SyncOutcome.Completed(pushed, rejected, pulled, blockedTreeCode)
+        return when (val history = syncAssessments(api, assessments)) {
+            is AssessmentSync.Done -> SyncOutcome.Completed(pushed, rejected, pulled, blockedTreeCode, history.pushed, history.pulled)
+            AssessmentSync.AuthExpired -> SyncOutcome.AuthExpired
+            is AssessmentSync.Transient -> SyncOutcome.Interrupted(history.reason, pushed)
+        }
+    }
+
+    private sealed interface AssessmentSync {
+        data class Done(val pushed: Int, val pulled: Int) : AssessmentSync
+        data object AuthExpired : AssessmentSync
+        data class Transient(val reason: String) : AssessmentSync
+    }
+
+    /** Runs after trees: an assessment needs its tree on the server first. */
+    private suspend fun syncAssessments(api: GeoTreeApi, assessments: LeafAssessmentRepository): AssessmentSync {
+        assessments.resetInterruptedSyncs()
+        var pushed = 0
+        for (record in assessments.unsynced()) {
+            when (val result = pushAssessment(api, assessments, record)) {
+                PushResult.Pushed -> pushed++
+                PushResult.Rejected -> Unit
+                PushResult.AuthExpired -> return AssessmentSync.AuthExpired
+                is PushResult.Transient -> return AssessmentSync.Transient(result.reason)
+            }
+        }
+        var pulled = 0
+        var after = preferences.lastPulledAssessmentVersion()
+        try {
+            for (page in 1..MAX_PULL_PAGES) {
+                val changes = api.leafAssessmentChanges(after)
+                if (changes.items.isEmpty()) break
+                pulled += assessments.applyRemote(changes.items)
+                after = changes.latestVersion
+                preferences.setLastPulledAssessmentVersion(after)
+                if (!changes.hasMore) break
+            }
+        } catch (e: HttpException) {
+            if (e.code() == 401) return AssessmentSync.AuthExpired
+            return AssessmentSync.Transient("Assessment pull failed: ${e.toApiError().message}")
+        } catch (e: IOException) {
+            return AssessmentSync.Transient("Assessment pull interrupted: ${e.message}")
+        }
+        return AssessmentSync.Done(pushed, pulled)
+    }
+
+    private suspend fun pushAssessment(api: GeoTreeApi, assessments: LeafAssessmentRepository, record: LeafAssessmentEntity): PushResult {
+        assessments.markSyncing(record.id)
+        return try {
+            var server = api.syncLeafAssessment(record.toSyncRequest()).assessment
+            var note: String? = null
+            val photo = record.imageLocalPath?.let(::File)
+            // Upload only when the server has no photo yet: retries never duplicate work.
+            if (server.imagePath == null && photo != null && photo.isFile) {
+                try {
+                    server = api.uploadLeafAssessmentImage(record.id, photo.toImagePart())
+                } catch (e: HttpException) {
+                    if (e.code() != 413 && e.code() != 415) throw e
+                    // The result is synced; a photo the server cannot store stays on this device.
+                    note = "Photo kept on this device only: ${e.toApiError().message}"
+                }
+            }
+            assessments.markSynced(record.id, server.serverVersion, server.imagePath, note)
+            PushResult.Pushed
+        } catch (e: HttpException) {
+            val error = e.toApiError()
+            when {
+                e.code() == 401 -> {
+                    assessments.markSyncFailed(record.id, "Sign in again to sync.")
+                    PushResult.AuthExpired
+                }
+                error.code == "TREE_NOT_FOUND" -> {
+                    assessments.markSyncFailed(record.id, "Waiting for its tree to sync first.")
+                    PushResult.Rejected
+                }
+                e.code() in 400..499 -> {
+                    assessments.markSyncFailed(record.id, error.message)
+                    PushResult.Rejected
+                }
+                else -> {
+                    assessments.markSyncFailed(record.id, "Server error (HTTP ${e.code()}). Will retry.")
+                    PushResult.Transient(error.message)
+                }
+            }
+        } catch (e: IOException) {
+            assessments.markSyncFailed(record.id, "Connection lost during sync. Will retry.")
+            PushResult.Transient(e.message ?: "Connection lost")
+        }
     }
 
     private suspend fun checkHealth(api: GeoTreeApi): SyncOutcome? = try {

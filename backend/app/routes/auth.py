@@ -16,7 +16,7 @@ router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
 
 def _user_out(user: dict[str, Any]) -> UserOut:
-    return UserOut(email=user["email"], display_name=user.get("display_name") or user["email"])
+    return UserOut(email=user["email"], display_name=user.get("display_name") or user["email"], role=user.get("role"))
 
 
 @router.post("/login", response_model=LoginResponse)

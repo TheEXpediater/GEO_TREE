@@ -20,6 +20,15 @@ class SyncPreferences(private val dataStore: DataStore<Preferences>) {
         }
     }
 
+    /** Separate cursor for the leaf-assessment change feed (its own server-side counter). */
+    suspend fun lastPulledAssessmentVersion(): Long = dataStore.data.first()[LAST_PULLED_ASSESSMENT] ?: 0L
+
+    suspend fun setLastPulledAssessmentVersion(version: Long) {
+        dataStore.edit { prefs ->
+            if (version > (prefs[LAST_PULLED_ASSESSMENT] ?: 0L)) prefs[LAST_PULLED_ASSESSMENT] = version
+        }
+    }
+
     /** Device time of the last sync run that completed. Display only; never a sync cursor. */
     val lastSuccessfulSyncAt: Flow<Long?> = dataStore.data.map { it[LAST_SUCCESS_AT] }
 
@@ -30,5 +39,6 @@ class SyncPreferences(private val dataStore: DataStore<Preferences>) {
     private companion object {
         val LAST_PULLED = longPreferencesKey("last_pulled_server_version")
         val LAST_SUCCESS_AT = longPreferencesKey("last_successful_sync_at")
+        val LAST_PULLED_ASSESSMENT = longPreferencesKey("last_pulled_assessment_version")
     }
 }

@@ -16,6 +16,8 @@ data class HealthDto(
     val service: String,
     val version: String? = null,
     val database: String? = null,
+    /** "enabled" when this server can assess leaves (the local Docker backend). */
+    val ai: String? = null,
 )
 
 @Serializable
@@ -25,6 +27,7 @@ data class LoginRequestDto(val email: String, val password: String)
 data class UserDto(
     val email: String,
     @SerialName("display_name") val displayName: String,
+    val role: String? = null,
 )
 
 @Serializable

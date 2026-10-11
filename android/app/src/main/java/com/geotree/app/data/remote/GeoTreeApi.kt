@@ -36,6 +36,20 @@ interface GeoTreeApi {
     @POST("api/v1/trees/{id}/image")
     suspend fun uploadImage(@Path("id") id: String, @Part file: MultipartBody.Part): TreeDto
 
+    // Leaf assessment history (data routes; work without the AI runtime).
+    @POST("api/v1/leaf-assessments/sync")
+    suspend fun syncLeafAssessment(@Body body: LeafAssessmentSyncRequestDto): LeafAssessmentSyncResponseDto
+
+    @Multipart
+    @POST("api/v1/leaf-assessments/{id}/image")
+    suspend fun uploadLeafAssessmentImage(@Path("id") id: String, @Part file: MultipartBody.Part): LeafAssessmentRecordDto
+
+    @GET("api/v1/leaf-assessments/changes")
+    suspend fun leafAssessmentChanges(
+        @Query("after_version") afterVersion: Long,
+        @Query("limit") limit: Int = 200,
+    ): LeafAssessmentChangesDto
+
     companion object {
         const val SERVICE_NAME = "geo-tree-api"
     }

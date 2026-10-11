@@ -1,0 +1,5 @@
+# CPU-only PyTorch for the frozen DINOv2 backbone (loaded through torch.hub; no torchvision needed).
+# CPU wheels keep the image small and work on every machine; NVIDIA GPU use is optional and not
+# configured by default (see README, "AI on GPU").
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.14.1+cpu

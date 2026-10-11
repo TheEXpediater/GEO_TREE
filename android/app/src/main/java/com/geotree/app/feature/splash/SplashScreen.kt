@@ -106,7 +106,10 @@ fun SplashScreen(onReady: (SplashDestination) -> Unit) {
             openLocalRecords = { c.treeRepository.treeCount() },
             prepareOfflineMap = { c.offlineMapInstaller.ensureInstalled() },
             restoreSession = { c.sessionStore.current() },
-            prepareApiClient = { c.apiProvider.api() },
+            prepareApiClient = {
+                c.backendConfig.migrateLegacyLocalOverride() // hosted builds leave old local servers behind
+                c.apiProvider.api()
+            },
             scheduleSync = {
                 c.syncScheduler.requestSync()
                 c.syncScheduler.schedulePeriodicSync()

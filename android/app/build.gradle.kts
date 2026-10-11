@@ -6,9 +6,29 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
-// Optional per-developer override, e.g. `-Pgeotree.baseUrl=http://192.168.1.20:8000`.
-// The app also lets the user change and verify the server URL at runtime.
+// Default server: the LOCAL Docker backend through the emulator host alias. The DINOv2 leaf
+// assessment milestone is tested locally (never against the hosted deployment). Override per
+// build, e.g. `-Pgeotree.baseUrl=http://192.168.1.20:8000` (phone on the LAN) or
+// `-Pgeotree.baseUrl=https://geotree.museuma7k9x3.tech` (production APK on the Hostinger VPS);
+// the app also lets the user change and verify the server URL at runtime.
 val defaultBaseUrl = (findProperty("geotree.baseUrl") as String?) ?: "http://10.0.2.2:8000"
+
+/** localhost, loopback, the emulator alias and private LAN ranges: the development servers. */
+fun isLocalServer(url: String): Boolean {
+    val host = url.substringAfter("://").substringBefore("/").substringBefore(":").lowercase()
+    if (host == "localhost") return true
+    val octets = host.split(".").mapNotNull { it.toIntOrNull() }
+    if (octets.size != 4) return false
+    val (a, b) = octets
+    return a == 127 || a == 10 || (a == 172 && b in 16..31) || (a == 192 && b == 168)
+}
+
+// Debug-only login prefill. Values end up readable inside the debug APK: a testing convenience,
+// NOT secret storage. The development password (admin123) is prefilled only for local servers;
+// a hosted build starts with an empty password unless -Pgeotree.prefillPassword is supplied.
+val prefillEmail = (findProperty("geotree.prefillEmail") as String?) ?: "admin@gmail.com"
+val prefillPassword = (findProperty("geotree.prefillPassword") as String?)
+    ?: if (isLocalServer(defaultBaseUrl)) "admin123" else ""
 
 android {
     namespace = "com.geotree.app"
@@ -18,16 +38,16 @@ android {
         applicationId = "com.geotree.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 5
-        versionName = "0.3.2-navigation-ux"
+        versionCode = 8
+        versionName = "0.5.0-hostinger"
         buildConfigField("String", "DEFAULT_BASE_URL", "\"$defaultBaseUrl\"")
     }
 
     buildTypes {
         debug {
-            // Development-only credentials: present in debug builds only.
-            buildConfigField("String", "DEV_EMAIL", "\"admin@gmail.com\"")
-            buildConfigField("String", "DEV_PASSWORD", "\"admin123\"")
+            // Development/test credentials: present in debug builds only (release stays empty).
+            buildConfigField("String", "DEV_EMAIL", "\"$prefillEmail\"")
+            buildConfigField("String", "DEV_PASSWORD", "\"$prefillPassword\"")
         }
         release {
             isMinifyEnabled = false
@@ -94,4 +114,5 @@ dependencies {
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.sqlite.jdbc)
 }

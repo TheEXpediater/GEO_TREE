@@ -1,6 +1,7 @@
 package com.geotree.app.core.network
 
 import com.geotree.app.BuildConfig
+import com.geotree.app.data.remote.GeoTreeAiApi
 import com.geotree.app.data.remote.GeoTreeApi
 import com.geotree.app.data.remote.GeoTreeJson
 import java.util.concurrent.TimeUnit
@@ -56,10 +57,34 @@ class ApiProvider(
     }
 
     /** Image URL for a server-relative path such as "tree_images/abc.jpg". */
-    suspend fun imageUrl(remotePath: String): String {
+    suspend fun imageUrl(remotePath: String): String = url("uploads/$remotePath")
+
+    /** Absolute URL for an API path on the configured backend, e.g. a classifier thumbnail. */
+    suspend fun url(path: String): String {
         val baseUrl = backendConfig.current()
         forBaseUrl(baseUrl) // ensures the token interceptor recognises this host
-        return "$baseUrl/uploads/$remotePath"
+        return "$baseUrl/$path"
+    }
+
+    /** DINOv2 runs on the server CPU: uploads and assessments get longer timeouts than sync. */
+    private val aiHttpClient: OkHttpClient by lazy {
+        okHttpClient.newBuilder().readTimeout(120, TimeUnit.SECONDS).writeTimeout(120, TimeUnit.SECONDS).build()
+    }
+
+    @Volatile
+    private var cachedAi: Pair<String, GeoTreeAiApi>? = null
+
+    suspend fun aiApi(): GeoTreeAiApi {
+        val baseUrl = backendConfig.current()
+        forBaseUrl(baseUrl) // same host as the field API, so the session token is attached
+        cachedAi?.let { (url, api) -> if (url == baseUrl) return api }
+        return Retrofit.Builder()
+            .baseUrl("$baseUrl/")
+            .client(aiHttpClient)
+            .addConverterFactory(GeoTreeJson.asConverterFactory("application/json".toMediaType()))
+            .build()
+            .create(GeoTreeAiApi::class.java)
+            .also { cachedAi = baseUrl to it }
     }
 }
 

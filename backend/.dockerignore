@@ -7,3 +7,5 @@ uploads
 *.pyc
 atlas-credentials
 atlas-credentials.*
+ai_data
+ai_cache

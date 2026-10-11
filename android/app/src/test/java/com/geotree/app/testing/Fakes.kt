@@ -17,6 +17,10 @@ import com.geotree.app.core.orientation.HeadingSource
 import com.geotree.app.core.orientation.RawHeading
 import com.geotree.app.data.remote.GeoTreeApi
 import com.geotree.app.data.remote.HealthDto
+import com.geotree.app.data.remote.LeafAssessmentChangesDto
+import com.geotree.app.data.remote.LeafAssessmentRecordDto
+import com.geotree.app.data.remote.LeafAssessmentSyncRequestDto
+import com.geotree.app.data.remote.LeafAssessmentSyncResponseDto
 import com.geotree.app.data.remote.LoginRequestDto
 import com.geotree.app.data.remote.LoginResponseDto
 import com.geotree.app.data.remote.TreeChangesDto
@@ -167,6 +171,66 @@ class FakeGeoTreeServer : GeoTreeApi {
         val updated = existing.copy(imagePath = "tree_images/$id-abc.jpg", serverVersion = ++version)
         trees[id] = updated
         return updated
+    }
+
+    // Leaf assessment history: immutable records by assessment id, own version counter.
+    val assessments = linkedMapOf<String, LeafAssessmentRecordDto>()
+    private var assessmentVersion = 0L
+    var assessmentSyncCalls = 0
+    var assessmentUploadCalls = 0
+    var failNextAssessmentSyncWithIo = false
+    var rejectAssessmentImagesWith: Int? = null
+
+    override suspend fun syncLeafAssessment(body: LeafAssessmentSyncRequestDto): LeafAssessmentSyncResponseDto {
+        assessmentSyncCalls++
+        if (failNextAssessmentSyncWithIo) {
+            failNextAssessmentSyncWithIo = false
+            throw IOException("unexpected end of stream")
+        }
+        if (!trees.containsKey(body.treeId)) throw httpError(404, "TREE_NOT_FOUND", "Sync the tree before its leaf assessments.")
+        assessments[body.assessmentId]?.let { existing ->
+            val same = existing.status == body.status && existing.className == body.className && existing.confidence == body.confidence &&
+                existing.modelVersion == body.modelVersion && existing.createdAt == body.createdAt
+            if (!same) throw httpError(409, "ASSESSMENT_CONFLICT", "This assessment was already recorded with a different result.")
+            return LeafAssessmentSyncResponseDto("unchanged", existing)
+        }
+        val record = LeafAssessmentRecordDto(
+            assessmentId = body.assessmentId, treeId = body.treeId, status = body.status, classId = body.classId,
+            className = body.className, confidence = body.confidence, modelName = body.modelName,
+            modelDisplayName = body.modelDisplayName, modelVersion = body.modelVersion, errorCode = body.errorCode,
+            errorMessage = body.errorMessage, imagePath = null, createdAt = body.createdAt, completedAt = body.completedAt,
+            updatedAt = body.updatedAt, serverVersion = ++assessmentVersion,
+        )
+        assessments[body.assessmentId] = record
+        return LeafAssessmentSyncResponseDto("created", record)
+    }
+
+    override suspend fun uploadLeafAssessmentImage(id: String, file: MultipartBody.Part): LeafAssessmentRecordDto {
+        assessmentUploadCalls++
+        rejectAssessmentImagesWith?.let { throw httpError(it, "UNSUPPORTED_IMAGE", "Only JPEG, PNG, or WebP images are accepted.") }
+        val existing = assessments[id] ?: throw httpError(404, "ASSESSMENT_NOT_FOUND", "Leaf assessment not found.")
+        if (existing.imagePath != null) return existing
+        val updated = existing.copy(imagePath = "leaf_assessments/$id.jpg", serverVersion = ++assessmentVersion)
+        assessments[id] = updated
+        return updated
+    }
+
+    override suspend fun leafAssessmentChanges(afterVersion: Long, limit: Int): LeafAssessmentChangesDto {
+        val newer = assessments.values.filter { it.serverVersion > afterVersion }.sortedBy { it.serverVersion }
+        val page = newer.take(limit)
+        return LeafAssessmentChangesDto(page, page.lastOrNull()?.serverVersion ?: afterVersion, newer.size > limit)
+    }
+
+    /** Simulates another device having synced a leaf scan. */
+    fun addRemoteAssessment(id: String, treeId: String, className: String, createdAt: String): LeafAssessmentRecordDto {
+        val record = LeafAssessmentRecordDto(
+            assessmentId = id, treeId = treeId, status = "COMPLETED", classId = "c-$className", className = className,
+            confidence = 0.9, modelName = "dinov2_vits14", modelDisplayName = "DINOv2 ViT-S/14", modelVersion = 2,
+            imagePath = "leaf_assessments/$id.jpg", createdAt = createdAt, completedAt = createdAt, updatedAt = createdAt,
+            serverVersion = ++assessmentVersion,
+        )
+        assessments[id] = record
+        return record
     }
 
     /** Simulates another device having synced a tree. */

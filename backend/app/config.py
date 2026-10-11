@@ -7,10 +7,12 @@ from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from dotenv import load_dotenv
+
+from app.ai.config import AiSettings, load_ai_settings
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +34,9 @@ class Settings:
     seed_dev_admin: bool = True
     dev_admin_email: str = "admin@gmail.com"
     dev_admin_password: str = "admin123"
+    # Folder with the published APK download page (index.html + GEO_Tree.apk); None disables /download.
+    distribution_dir: Path | None = None
+    ai: AiSettings = field(default_factory=AiSettings)
 
     @property
     def is_development(self) -> bool:
@@ -82,4 +87,6 @@ def load_settings() -> Settings:
         seed_dev_admin=environment == "development" and _env_bool("SEED_DEV_ADMIN", True),
         dev_admin_email=os.environ.get("DEV_ADMIN_EMAIL", "admin@gmail.com"),
         dev_admin_password=os.environ.get("DEV_ADMIN_PASSWORD", "admin123"),
+        distribution_dir=Path(os.environ["DISTRIBUTION_DIR"]) if os.environ.get("DISTRIBUTION_DIR", "").strip() else None,
+        ai=load_ai_settings(),
     )

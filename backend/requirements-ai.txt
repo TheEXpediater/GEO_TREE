@@ -1,0 +1,6 @@
+# AI runtime for the local Docker backend (Dockerfile build arg INSTALL_AI=true).
+# Kept out of requirements.txt so servers without AI (e.g. the hosted deployment) build as before.
+numpy==2.5.3
+pillow==12.3.0
+pillow-heif==1.8.0
+scikit-learn==1.9.1

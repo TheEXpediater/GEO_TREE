@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.preferencesDataStore
+import com.geotree.app.core.camera.ContentImageReader
 import com.geotree.app.core.camera.TreeImageStore
 import com.geotree.app.core.database.GeoTreeDatabase
 import com.geotree.app.core.location.LocationClient
@@ -19,6 +20,9 @@ import com.geotree.app.core.sync.SyncPreferences
 import com.geotree.app.core.sync.SyncScheduler
 import com.geotree.app.core.sync.SyncStatusTracker
 import com.geotree.app.data.repository.AuthRepository
+import com.geotree.app.data.repository.ClassifierRepository
+import com.geotree.app.data.repository.LeafAssessmentRepository
+import com.geotree.app.data.repository.LocalImageReader
 import com.geotree.app.data.repository.TreeRepository
 import com.geotree.app.feature.locator.map.Basemap
 import com.geotree.app.feature.locator.map.MapSourceSettings
@@ -31,6 +35,9 @@ import com.geotree.app.feature.navigation.DirectRouteProvider
 import com.geotree.app.feature.navigation.NavigationConfig
 import com.geotree.app.feature.navigation.RouteProvider
 import java.io.File
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
@@ -59,10 +66,32 @@ class AppContainer(context: Context) {
     val headingSource: HeadingSource = DeviceHeadingProvider(appContext)
     val imageStore = TreeImageStore(appContext)
 
+    /** Leaf assessment (DINOv2 on the local AI server). Records and photos stay on the device. */
+    val leafImageStore = TreeImageStore(appContext, "leaf_images")
+    val localImageReader: LocalImageReader = ContentImageReader(appContext)
+    /** Work that must outlive a screen, e.g. a leaf assessment request after navigating to its result. */
+    val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    /** Leaf assessment history: every scan is its own Room record, synced like trees. */
+    val leafAssessmentRepository: LeafAssessmentRepository by lazy {
+        LeafAssessmentRepository(
+            dao = database.leafAssessmentDao(),
+            api = apiProvider::aiApi,
+            scope = applicationScope,
+            onFinished = { syncScheduler.requestSync(replace = false) },
+        )
+    }
+
+    /** Admin: the server-side classifier dataset (classes, training images, model status). */
+    val classifierRepository = ClassifierRepository(apiProvider::aiApi, apiProvider::url)
+
     val syncStatusTracker = SyncStatusTracker()
     val syncPreferences = SyncPreferences(preferences)
     val syncEngine: SyncEngine by lazy {
-        SyncEngine(treeRepository, apiProvider::api, sessionStore, syncPreferences, syncStatusTracker)
+        SyncEngine(
+            treeRepository, apiProvider::api, sessionStore, syncPreferences, syncStatusTracker,
+            leafAssessments = leafAssessmentRepository,
+        )
     }
     val syncScheduler = SyncScheduler(appContext)
 

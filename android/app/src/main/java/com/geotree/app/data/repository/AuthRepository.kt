@@ -26,6 +26,7 @@ class AuthRepository(
             accessToken = response.accessToken,
             email = response.user.email,
             expiresAtMillis = runCatching { response.expiresAt.parseIsoMillis() }.getOrDefault(0L),
+            role = response.user.role,
         )
         sessionStore.save(session)
         LoginResult.Success(session)
@@ -33,6 +34,22 @@ class AuthRepository(
         if (e.code() == 401) LoginResult.InvalidCredentials else LoginResult.ServerError(e.toApiError().message)
     } catch (e: IOException) {
         LoginResult.Unreachable(e.message ?: "Network error")
+    }
+
+    /**
+     * Refreshes the stored role from /auth/me (e.g. a session saved before roles existed).
+     * Best effort: offline or a rejected token leaves the stored session unchanged.
+     */
+    suspend fun refreshProfile() {
+        val session = sessionStore.current() ?: return
+        val user = try {
+            api().me()
+        } catch (e: HttpException) {
+            return
+        } catch (e: IOException) {
+            return
+        }
+        if (user.role != session.role) sessionStore.updateRole(session.accessToken, user.role)
     }
 
     /** Local trees and images are kept; only the session is removed. */
