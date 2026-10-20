@@ -145,7 +145,7 @@ function ClassNameDialog({ open, item, onClose }: { open: boolean; item: Classif
       onClose={onClose}
       size="sm"
       title={item ? "Rename Classifier" : "Add Classifier"}
-      description={item ? `Current name: ${item.name}` : "Adds a classification label (e.g. Healthy, Spotting, Mold) to the one tamarind leaf classifier. It is not a new model."}
+      description={item ? `Current name: ${item.name}` : "Adds a classification label (e.g. Healthy, Spotting, Powdery Mildew) to the one tamarind leaf classifier. It is not a new model."}
       footer={
         <>
           <Button onClick={onClose}>Cancel</Button>
@@ -197,7 +197,7 @@ export function ClassifiersPage() {
           {classes.isLoading || !classes.data ? (
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{Array.from({ length: 3 }, (_, i) => <Skeleton key={i} className="h-48" />)}</div>
           ) : classes.data.items.length === 0 ? (
-            <EmptyState icon={Layers} title="No classes yet" description="Add the leaf conditions to recognise, for example Healthy, Spotting and Mold." action={<Button variant="primary" icon={Plus} onClick={() => setNaming({ open: true, item: null })}>Add Classifier</Button>} />
+            <EmptyState icon={Layers} title="No classes yet" description="Add the leaf conditions to recognise, for example Healthy, Spotting and Powdery Mildew." action={<Button variant="primary" icon={Plus} onClick={() => setNaming({ open: true, item: null })}>Add Classifier</Button>} />
           ) : (
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
               {classes.data.items.map((item) => (

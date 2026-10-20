@@ -2,7 +2,14 @@
 
 Android field-management app for registering, geotagging, locating and navigating to tamarind trees, with DINOv2-based tamarind leaf condition assessment. It works offline first and syncs to a shared FastAPI/MongoDB backend.
 
-## On-device leaf assessment (current, 0.7.0)
+## Dataset v3, Powdery Mildew and the Render API (current, 0.8.0)
+
+- **New classifier dataset (2026-10-20).** The active training set was replaced with the labeled photos in `data-sets.zip` (local only, never committed; SHA-256 `82775506…`). Classes are now **Healthy, Spotting, Powdery Mildew**: the old class `Mold` was renamed in place (same class id, so earlier assessments and models stay consistent) and source folders `Mold`/`Molds` map to Powdery Mildew. Of 184 photos, 181 are usable (2 conflicting copies of `IMG_7259` and 1 exact duplicate excluded); 144 are the active training set and 37 are a **locked test set** that never entered training. See section 11, "Replacing the classifier dataset".
+- **Model v3** (frozen DINOv2 ViT-S/14 + logistic-regression head, group-aware validation): locked test set 34/37 correct (accuracy 0.919, balanced accuracy 0.890, macro-F1 0.878). This is an **internal split estimate**: test photos come from the same capture sessions as training photos. A leave-one-source-out check (train on three source folders, test on the fourth) scored 0.49–0.71, i.e. accuracy on a new photographer, day or background is likely much lower. Not field-validated.
+- **APK 0.8.0** bundles model v3 (head `4ddbdc65…`, backbone unchanged) and still classifies fully offline; it talks to the hosted API at `https://geo-tree.onrender.com`.
+- **Render + MongoDB Atlas.** The hosted API is the lightweight FastAPI service only (`render.yaml`, section 12): no AI, no model files, and **no photo storage** (`IMAGE_STORAGE=disabled`, automatic on Render): records sync to Atlas, photos stay on the phones. Local Docker keeps everything AI (import, features, training, export, tests).
+
+## On-device leaf assessment (0.7.0)
 
 Field testers can assess a tamarind leaf **with no internet connection**. Since 0.7.0 the phone runs the same model the server trained, and the server is not involved in producing a result:
 
@@ -408,6 +415,7 @@ After reconnecting, WorkManager synced both trees, with images, without duplicat
 - Phone: `filesDir/tree_images/<uuid>.jpg` (about 2 MP JPEG from CameraX). Room stores `localImagePath` and `remoteImagePath`.
 - Server: content-sniffed JPEG/PNG/WebP (max 10 MB) saved as `uploads/tree_images/<treeId>-<random>.<ext>`. MongoDB stores `image_path`.
 - `GET /uploads/tree_images/{file}` requires the bearer token. Coil uses the app's authenticated OkHttp client.
+- `IMAGE_STORAGE=disabled` (automatic on Render): photo uploads are acknowledged without storing bytes and photos stay on the phones; see section 12.
 
 ## 9. Field guidance (navigation)
 
@@ -677,11 +685,67 @@ Checks:
 
 Field flow on the emulator (airplane mode, server unreachable): 3 scans of one tree → 3 COMPLETED records with distinct ids, results equal to the server's for the same photos; kept after force-stop and offline restart; synced automatically about 5 s after reconnecting (photos uploaded once); repeated syncs added no duplicates. A corrupted installed model file was detected and re-installed from the APK at the next start.
 
+### Replacing the classifier dataset (done 2026-10-20 with `data-sets.zip`)
+
+Only the classifier **training** set and what depends on it (stored images, thumbnails, cached DINOv2 features, model versions) is replaced; trees, accounts, leaf assessments and their photos are untouched. Procedure (PowerShell, local Docker running):
+
+1. **Back up** outside the repository: `mongodump --db=geo_tree`, a tar of the `geo_tree_ai_data` volume and a copy of `android/app/src/main/assets/leaf_model/`; verify the dump by restoring it into a scratch database.
+2. **Audit and stage** the ZIP outside the repository (hash, member list, path-traversal check, extraction), validate every image with the backend's own `validate_image`, compute DINOv2 features with the server extractor, and write a provenance manifest: source entry, part, original/canonical label, size, SHA-256, exclusion reason, same-leaf group, split.
+3. **Group and split.** Same-label photos are grouped as one leaf when DINOv2 cosine ≥ 0.97, or when they are consecutive iPhone shots ≤ 10 s apart with cosine ≥ 0.93. About 20 % of the groups per class and source folder form the locked test set (seed 20261020); a group never straddles train and test.
+4. **Replace** (rename keeps the class id; old images are removed through the service, new ones added through it; `split_group` and provenance are stored on each record; one manual training job is queued):
+   ```powershell
+   docker run --rm --network geo_tree_default -e MONGO_URI=mongodb://mongodb:27017 -e AI_DATA_DIR=/app/ai_data `
+     -e AI_RETRAIN_DEBOUNCE_SECONDS=86400 -v geo_tree_ai_data:/app/ai_data -v "<staging>:/data:ro" -v "<manifests>:/manifests" `
+     geo_tree-backend:latest python scripts/replace_classifier_dataset.py --manifest /manifests/dataset_manifest.csv `
+     --root /data --rename "Mold=Powdery Mildew" --confirm --retrain
+   ```
+   Without `--confirm` it is a dry run. It refuses to run with unexpected classes, duplicate manifest rows or a training job in progress, and verifies afterwards that every record matches its manifest file, label, checksum and cached feature and that no old image or feature remains.
+5. **Train.** The backend trains as usual; training now keeps each `split_group` on one side of its validation split and selects the regularization with group-aware cross-validation (images without a group fall back to their SHA-256, the previous behaviour).
+6. **Evaluate** the exact artifact on the locked test features: `backend/scripts/evaluate_classifier_holdout.py --manifest … --features … --model-json model_v<N>.json --artifact model_v<N>.npz --baseline <old>.npz --loso --out report.json`.
+7. **Export** for Android with `export_mobile_model.py --model-json /app/ai_data/models/model_v<N>.json` (section above) and run the device parity harness.
+
+**Results for model v3** (frozen DINOv2 ViT-S/14, logistic-regression head, C = 1, seed 42; 144 training images: Healthy 27, Spotting 31, Powdery Mildew 86; service validation split 115/29, accuracy 0.931, macro-F1 0.922):
+
+| Locked test set (37 images, 31 leaf groups) | Healthy | Spotting | Powdery Mildew |
+|---|---|---|---|
+| Expected Healthy (7) | 5 | 2 | 0 |
+| Expected Spotting (8) | 0 | 8 | 0 |
+| Expected Powdery Mildew (22) | 1 | 0 | 21 |
+| Precision / recall / F1 | 0.833 / 0.714 / 0.769 | 0.800 / 1.000 / 0.889 | 1.000 / 0.955 / 0.977 |
+
+Accuracy 0.919 (34/37), balanced accuracy 0.890, macro precision 0.878, macro-F1 0.878; 2 predictions fell below the 0.6 "uncertain" threshold (accuracy of the other 35: 0.971). By capture setup: hand-held over soil 18/20, leaf on paper 16/17.
+
+- **Old model (v2) on the same 37 images:** 31/37, but it was trained on 25 of them (the old dataset came from the same photos). On the 12 test images it never saw: old 7/12, new 11/12.
+- **Leave-one-source-out** (fit on three folders, test on the fourth; not used to choose the model): Annah 0.708 (balanced 0.562), Kyla 0.613 (0.679), part 1 0.487 (0.504), part 2 0.565 (Powdery Mildew recall 26/46). With `part 1` held out, the only paper-background training photos were Powdery Mildew and most paper-background Healthy/Spotting leaves were called Powdery Mildew: the model partly relies on background/session cues. The deployed model is trained on all sources (both backgrounds in every class), but its accuracy on a new photographer, day or background is likely far below 0.92.
+- **Label quality.** `Mold` photos (hand-held, green leaves, pale undersides with small dark specks) were mapped to Powdery Mildew as instructed; the white powdery patches are clearly visible only in some `powdery mildew` (paper) photos. This mapping is not botanically verified. `IMG_7259` (identical file in Mold and Spotting) stays excluded until its true label is known; `Molds` and `Spot` were treated as spelling variants of Mold and Spotting.
+- **Parity.** Evaluation features are bit-identical to the server's cached training features (144/144). ONNX vs PyTorch on all 144 training images: min cosine 0.99999976, same class 144/144. Phone vs server on all 184 ZIP photos (emulator, release model v3): same class 184/184, identical decoded pixels and input tensors 184/184, max probability difference 3.4e-6; median 0.69 s per 12 MP photo.
+
 ### AI on GPU (optional, not configured)
 
 The default image uses CPU PyTorch on purpose: it works on every machine, and recent CUDA builds of PyTorch may not support the GTX 1050 Ti (Pascal) architecture. To experiment, install a CUDA build of PyTorch that supports your GPU in `requirements-ai-torch.txt`, add `gpus: all` to the backend service, and keep `DINOV2_DEVICE=auto`. GPU execution has not been tested in this repository.
 
-## 12. Hosted deployment (Hostinger VPS, shared with the museum app)
+## 12. Hosted API on Render + MongoDB Atlas (current)
+
+```text
+Android (offline-first, on-device AI) ──HTTPS──> Render web service: FastAPI (backend/requirements.txt only)
+Web admin (optional, from local Docker)                │
+                                                       └── MongoDB Atlas (structured records only)
+Local Docker: classifier import, DINOv2 features, training, ONNX export, full tests
+```
+
+- **Service:** `https://geo-tree.onrender.com` (existing Render web service, created in the dashboard; on 2026-10-20 its health returned `database: ok`, `ai: disabled` after a 33 s cold start, and its OpenAPI already listed every route the app uses). `render.yaml` documents the intended settings: root directory `backend`, build `pip install -r requirements.txt`, start `uvicorn main:app --host 0.0.0.0 --port $PORT`, health check `/api/v1/health`. Keep the dashboard in line with it.
+- **Environment (Render dashboard, never in Git):** `MONGO_URI` (Atlas SRV string) and `JWT_SECRET` as secrets; `ENVIRONMENT=production`, `MONGO_DATABASE=geo_tree`, `AI_ENABLED=false`, `IMAGE_STORAGE=disabled`. Startup only creates indexes idempotently; nothing is wiped or reseeded (the development admin is never seeded outside development).
+- **No AI on Render.** PyTorch/DINOv2 are not installed; `/api/v1/ai/*` answer `503 AI_DISABLED`. Phones classify on-device; the model-update check simply finds no server model and keeps the bundled one.
+- **No photos on Render.** The free filesystem is ephemeral, so `IMAGE_STORAGE` defaults to `disabled` whenever Render's `RENDER=true` is present. Tree and leaf-assessment photo uploads are then acknowledged without storing bytes (`200`, record unchanged, header `X-GeoTree-Image-Storage: disabled`): records sync to Atlas and each photo stays on the phone that took it (phones never delete photos after upload). Admin photo replacement answers `503 IMAGE_STORAGE_DISABLED`. Durable photo storage (e.g. an object store or a paid persistent disk) is a separate, not yet approved decision; set `IMAGE_STORAGE=local` only on a host with a persistent disk. Photos uploaded to Render before 0.8.0 were written to its ephemeral disk and are not recoverable there.
+- **Deploys:** pushing to `main` redeploys the service if auto-deploy is enabled in the dashboard. Data lives in Atlas and survives deploys and restarts.
+- **Free-tier limits** (re-check before relying on them: <https://render.com/docs/free>, <https://www.mongodb.com/docs/atlas/reference/free-shared-limitations/>): the service sleeps after idle time and the first request then takes tens of seconds (the app keeps working offline and retries sync); local files do not survive restarts; Atlas free clusters have limited storage and throughput.
+- **Smoke test (2026-10-20, local, Render mode):** the API ran from a virtualenv with only `requirements.txt` (no NumPy/Pillow/PyTorch), `RENDER=true`, `ENVIRONMENT=production`, against a throwaway database: health (`ai: disabled`, `imageStorage: disabled`), sign-in, wrong-password and missing-token refusals, tree sync, photo uploads acknowledged without bytes, assessment sync plus idempotent resend, change feeds, AI routes `503`; after a restart all records were still there exactly once. The throwaway database was then dropped.
+- **Android:** client APKs are built with `-Pgeotree.baseUrl=https://geo-tree.onrender.com` (release builds are HTTPS-only). Development builds keep `http://10.0.2.2:8000` (emulator), `http://localhost:8000` (host) and the in-app server setting for a phone on the LAN.
+
+## 12b. Historical: Hostinger VPS deployment (not used since 2026-10-20)
+
+The notes below describe the earlier deployment next to the museum app. The VPS term ended on 2026-10-19 and it is not a target any more; GEO Tree data from it was recovered to `C:\GEO_TREE_RECOVERY\2026-10-20`. The QR code still encodes `https://geotree.museuma7k9x3.tech/download`; changing the download target is a separate decision.
+
 
 GEO Tree runs on the same Hostinger VPS as the museum app, as a **separate Compose project**. The museum stack is protected production: GEO Tree never uses its directories, volumes, networks, databases or ports.
 
@@ -815,13 +879,13 @@ docker exec geo-tree-api python scripts/promote_super_admin.py --email admin@gma
 ## API
 
 ```text
-GET  /api/v1/health                     (also reports "ai": "enabled" | "disabled")
+GET  /api/v1/health                     (also reports "ai": "enabled" | "disabled" and "imageStorage": "local" | "disabled")
 POST /api/v1/auth/login                 (user includes "role")
 GET  /api/v1/auth/me
 POST /api/v1/trees/sync
 GET  /api/v1/trees/changes?after_version=<n>&limit=<1..500>
 GET  /api/v1/trees/{id}
-POST /api/v1/trees/{id}/image           (multipart field: file)
+POST /api/v1/trees/{id}/image           (multipart field: file)  (IMAGE_STORAGE=disabled: 200 without storing, header X-GeoTree-Image-Storage: disabled)
 GET  /uploads/tree_images/{filename}
 
 # Leaf assessment (any signed-in user; 503 AI_DISABLED where AI is off). Android 0.7.0+ classifies on the phone and
@@ -893,9 +957,11 @@ Errors are structured as `{"error": {"code": "...", "message": "...", "details":
 - A scan of a tree that has not reached the server yet waits (sync FAILED, "Waiting for its tree to sync first.") and is retried on the next sync. A photo format the server cannot store (e.g. a HEIC picked from the gallery) stays on the phone; the result still syncs.
 - Scans pulled from another device show their photo only while the server is reachable (there is no offline copy of other devices' photos). Assessments cannot be deleted or edited in the app.
 - Back-stack behaviour (result → Tree Detail, history → detail → Tree Detail) was verified on the emulator; it has no automated UI test (the unit tests run on the JVM without an Android navigation host).
+- **Model v3 is not field-validated.** Its 0.92 locked-test accuracy comes from photos of the same capture sessions as its training photos; leave-one-source-out scored 0.49–0.71 and showed reliance on background/session cues (section 11). The `Mold` → Powdery Mildew mapping is user-authorized, not botanically verified. Collect new sessions (other days, trees, photographers, both backgrounds per class) before trusting it in the field.
+- **The Render API stores no photos** (ephemeral disk): photos stay on the phone that took them, and the web admin shows no photo for records synced through Render.
 - **AI accuracy was measured on a small dataset** (section 11) and is not a general claim. The admin photo picker reports Android's media names (e.g. `241.png`) as file names, not the original camera names.
 - The debug APK is large: about 220 MB in 0.7.0 (on-device model 81 MB compressed, ONNX Runtime native libraries about 75 MB and MapLibre about 42 MB for four ABIs, offline map 5.4 MB). Restricting ABIs to arm64-v8a/armeabi-v7a, ABI splits or an App Bundle would roughly halve the download.
 
 ## Next milestone
 
-Collect more labeled tamarind leaf photos (separate field sessions for training and testing; resolve the `IMG_7259` label conflict), re-measure on a larger held-out set, and field-test leaf assessment on a physical phone against the laptop backend. Field-test the offline map, GPS accuracy and guidance at PSAU.
+Collect new labeled photo sessions (different days, trees and photographers, each class on both backgrounds), keep one whole session as an independent test, resolve the `IMG_7259` label conflict, and run the offline assessment test on a physical phone. Decide on durable photo storage for the hosted API. Field-test the offline map, GPS accuracy and guidance at PSAU.

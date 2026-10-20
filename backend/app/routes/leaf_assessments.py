@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Query, Response, UploadFile
 from pymongo.database import Database
 
 from app.auth.dependencies import get_current_user, get_db, get_settings
@@ -65,6 +65,7 @@ def get_assessment(
 @router.post("/leaf-assessments/{assessment_id}/image", response_model=LeafAssessmentOut)
 async def upload_image(
     assessment_id: UUID,
+    response: Response,
     file: UploadFile = File(...),
     db: Database = Depends(get_db),
     settings: Settings = Depends(get_settings),
@@ -76,6 +77,10 @@ async def upload_image(
         raise ApiError(404, "ASSESSMENT_NOT_FOUND", "Sync the assessment before uploading its photo.")
     if existing.get("image_path"):
         return LeafAssessmentOut.from_document(existing)  # idempotent: the first photo stays
+    if not settings.image_storage_enabled:
+        # No durable photo storage on this host: the scan is synced, its photo stays on the phone.
+        response.headers[image_storage.IMAGE_STORAGE_HEADER] = "disabled"
+        return LeafAssessmentOut.from_document(existing)
     data = await file.read(settings.max_image_bytes + 1)
     image_path = image_storage.save_assessment_image(settings.upload_dir, str(assessment_id), data, settings.max_image_bytes)
     updated = leaf_assessment_sync.attach_image(db, str(assessment_id), image_path)

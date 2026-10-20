@@ -17,7 +17,7 @@ def test_model_versions_jobs_and_classifier_audit(ai_client, admin_headers):
     jobs = ai_client.get(f"{API}/ai/jobs", headers=admin_headers).json()["items"]
     assert {j["status"] for j in jobs} == {"COMPLETE"} and len(jobs) == 2
 
-    ai_client.patch(f"{API}/classifiers/{classes['Mold']['id']}", json={"name": "Sooty Mold"}, headers=admin_headers)
+    ai_client.patch(f"{API}/classifiers/{classes['Powdery Mildew']['id']}", json={"name": "Sooty Mold"}, headers=admin_headers)
     actions = [e["action"] for e in ai_client.get(f"{API}/activity?pageSize=50", headers=admin_headers).json()["items"]]
     for expected in ("classifier.images_upload", "model.activated", "model.retrain_requested", "classifier.rename"):
         assert expected in actions, expected

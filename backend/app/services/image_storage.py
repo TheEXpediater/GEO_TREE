@@ -12,6 +12,8 @@ from app.errors import ApiError
 
 IMAGE_SUBDIR = "tree_images"
 ASSESSMENT_SUBDIR = "leaf_assessments"
+# Set on a photo upload response when the server did not store the bytes (IMAGE_STORAGE=disabled).
+IMAGE_STORAGE_HEADER = "X-GeoTree-Image-Storage"
 SAFE_FILENAME = re.compile(r"^[A-Za-z0-9-]{1,80}\.(jpg|png|webp)$")
 
 

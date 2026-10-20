@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Query, Response, UploadFile
 from pymongo.database import Database
 
 from app.auth.dependencies import get_current_user, get_db, get_settings
@@ -52,6 +52,7 @@ def get_tree(tree_id: UUID, db: Database = Depends(get_db), _: dict[str, Any] = 
 @router.post("/{tree_id}/image", response_model=TreeOut)
 async def upload_image(
     tree_id: UUID,
+    response: Response,
     file: UploadFile = File(...),
     db: Database = Depends(get_db),
     settings: Settings = Depends(get_settings),
@@ -60,6 +61,10 @@ async def upload_image(
     existing = tree_repository.find_by_id(db, str(tree_id))
     if existing is None:
         raise ApiError(404, "TREE_NOT_FOUND", "Sync the tree metadata before uploading its image.")
+    if not settings.image_storage_enabled:
+        # No durable photo storage on this host: the record is synced, the photo stays on the phone.
+        response.headers[image_storage.IMAGE_STORAGE_HEADER] = "disabled"
+        return TreeOut.from_document(existing)
     data = await file.read(settings.max_image_bytes + 1)
     image_path = image_storage.save_tree_image(settings.upload_dir, str(tree_id), data, settings.max_image_bytes)
     updated = tree_sync.attach_image(db, str(tree_id), image_path)

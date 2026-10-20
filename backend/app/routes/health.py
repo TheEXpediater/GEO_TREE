@@ -26,5 +26,7 @@ def health(request: Request, db: Database = Depends(get_db)) -> JSONResponse:
             "version": API_VERSION,
             "database": "ok" if database_ok else "unavailable",
             "ai": "enabled" if getattr(request.app.state, "ai", None) is not None else "disabled",
+            # "disabled": photos stay on the phones (no durable disk on this host, e.g. Render).
+            "imageStorage": "local" if request.app.state.settings.image_storage_enabled else "disabled",
         },
     )

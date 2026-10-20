@@ -1,0 +1,47 @@
+{
+  "formatVersion": 1,
+  "model": "dinov2_vits14",
+  "modelDisplayName": "DINOv2 ViT-S/14",
+  "embeddingModel": "dinov2_vits14|336px|resize384-bicubic-centercrop|imagenet-norm|cls|v1",
+  "embeddingDimension": 384,
+  "preprocessing": {
+    "version": 1,
+    "imageSize": 336,
+    "resizeShortSide": 384,
+    "resample": "pillow-bicubic",
+    "crop": "center",
+    "mean": [
+      0.48500001430511475,
+      0.4560000002384186,
+      0.4059999883174896
+    ],
+    "std": [
+      0.2290000021457672,
+      0.2240000069141388,
+      0.22499999403953552
+    ],
+    "layout": "NCHW"
+  },
+  "confidenceThreshold": 0.6,
+  "backbone": {
+    "file": "dinov2_vits14_336.onnx",
+    "sha256": "58f899dce5f2e36126f30b731819943b85b6eab217e2cda6be06c046be48076f",
+    "bytes": 87098063,
+    "input": "pixel_values",
+    "output": "features",
+    "opset": 17
+  },
+  "head": {
+    "file": "classifier_head.json",
+    "sha256": "4ddbdc65065ea1e84590ce70fd13410bc4e05908fc95097c8d6d0306712c35b1"
+  },
+  "exportParity": {
+    "images": 144,
+    "minCosine": 0.9999997615814209,
+    "maxAbsFeatureDiff": 2.574920654296875e-05,
+    "maxProbabilityDiff": 3.3510087991128756e-06,
+    "classAgreement": 1.0,
+    "onnxruntime": "1.22.0",
+    "torch": "2.14.1+cpu"
+  }
+}

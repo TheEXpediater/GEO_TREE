@@ -76,6 +76,30 @@ def test_split_never_separates_identical_content():
     assert len(sides) == 1
 
 
+def test_split_keeps_a_split_group_together_and_ignores_it_when_absent():
+    # Repeated shots of one leaf (same group, different bytes) never straddle train/validation.
+    items = [SplitItem(f"i{c}{n}", c, f"{c}-{n}", f"leaf-{c}-{n // 3}") for c in "xy" for n in range(12)]
+    for seed in range(5):
+        train, validation = split_train_validation(items, 0.25, seed=seed)
+        for group in {item.group for item in items}:
+            assert len({("t" if item in train else "v") for item in items if item.group == group}) == 1
+        assert {item.class_id for item in validation} == {"x", "y"}
+    ungrouped = [SplitItem(i.image_id, i.class_id, i.sha256) for i in items]
+    assert split_train_validation(ungrouped, 0.25, seed=3)[1] == split_train_validation(
+        [SplitItem(i.image_id, i.class_id, i.sha256, None) for i in items], 0.25, seed=3)[1]
+
+
+def test_head_with_groups_never_splits_a_group_across_cv_folds_and_still_learns():
+    features, labels = clusters(12)
+    groups = [f"{label}-{i // 3}" for i, label in enumerate(labels)]
+    head = fit_head(features, labels, ["a", "b", "c"], seed=42, groups=groups)
+    assert head.predict(features) == labels
+    assert set(head.cv_scores) == {"0.01", "0.1", "1.0", "10.0"}
+    # Without groups the result is exactly the previous behaviour.
+    plain = fit_head(features, labels, ["a", "b", "c"], seed=42)
+    assert np.allclose(plain.weights, fit_head(features, labels, ["a", "b", "c"], seed=42, groups=None).weights)
+
+
 def test_split_keeps_one_image_on_each_side_for_tiny_classes():
     items = [SplitItem("a", "x", "1"), SplitItem("b", "x", "2")]
     train, validation = split_train_validation(items, 0.5, seed=0)

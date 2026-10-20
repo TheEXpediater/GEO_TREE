@@ -47,7 +47,7 @@ from app.repositories import ai_repository, classifier_repository
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_CLASSES = ("Healthy", "Spotting", "Mold")
+DEFAULT_CLASSES = ("Healthy", "Spotting", "Powdery Mildew")
 MAX_CLASS_NAME = 40
 WORKER_POLL_SECONDS = 1.0
 
@@ -531,13 +531,15 @@ class AiService:
             raise TrainingError(f"Cached features have dimension {features.shape[1]}, expected {self.extractor.dimension}.")
 
         row = {image["id"]: i for i, image in enumerate(images)}
-        items = [SplitItem(image["id"], image["class_id"], image["sha256"]) for image in images]
+        items = [SplitItem(image["id"], image["class_id"], image["sha256"], image.get("split_group")) for image in images]
+        grouped = any(item.group for item in items)
         train, validation = split_train_validation(items, self.settings.validation_fraction, self.settings.split_seed)
         head = fit_head(
             features[[row[i.image_id] for i in train]],
             [i.class_id for i in train],
             class_ids,
             seed=self.settings.split_seed,
+            groups=[i.group_key for i in train] if grouped else None,
         )
         predicted = head.predict(features[[row[i.image_id] for i in validation]])
         metrics = classification_metrics([i.class_id for i in validation], predicted, labels=class_ids)
@@ -575,7 +577,13 @@ class AiService:
                 "max_iter": MAX_ITERATIONS,
                 "features": "l2-normalized, centered, scaled by sqrt(dimension)",
             },
-            "split": {"validation_fraction": self.settings.validation_fraction, "seed": self.settings.split_seed, "stratified": True, "grouped_by": "sha256"},
+            "split": {
+                "validation_fraction": self.settings.validation_fraction,
+                "seed": self.settings.split_seed,
+                "stratified": True,
+                "grouped_by": "split_group (else sha256)" if grouped else "sha256",
+                "validation_image_ids": sorted(i.image_id for i in validation),
+            },
             "artifact_path": artifact,
             "dataset_version": dataset_version,
             "job_id": job["id"],

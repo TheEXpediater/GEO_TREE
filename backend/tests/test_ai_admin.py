@@ -100,7 +100,7 @@ def test_ai_routes_report_disabled_when_ai_is_off(client, auth_headers):
 def test_default_classes_are_seeded_once_on_empty_database(ai_client, admin_headers):
     assert ai_client.get("/api/v1/health").json()["ai"] == "enabled"
     body = ai_client.get(f"{API}/classifiers", headers=admin_headers).json()
-    assert [item["name"] for item in body["items"]] == ["Healthy", "Spotting", "Mold"]
+    assert [item["name"] for item in body["items"]] == ["Healthy", "Spotting", "Powdery Mildew"]
     assert all(item["imageCount"] == 0 and item["status"] == "INSUFFICIENT" for item in body["items"])
     assert body["minImagesPerClass"] == 3
     assert ai_client.app.state.ai.seed_default_classes() == 0
@@ -123,7 +123,7 @@ def test_class_create_rename_conflict_and_validation(ai_client, admin_headers):
     renamed = ai_client.patch(f"{API}/classifiers/{other_id}", json={"name": "Unknown"}, headers=admin_headers)
     assert renamed.status_code == 200
     assert renamed.json()["slug"] == "unknown"
-    clash = ai_client.patch(f"{API}/classifiers/{other_id}", json={"name": "mold"}, headers=admin_headers)
+    clash = ai_client.patch(f"{API}/classifiers/{other_id}", json={"name": "powdery mildew"}, headers=admin_headers)
     assert clash.status_code == 409
 
     assert ai_client.delete(f"{API}/classifiers/{other_id}", headers=admin_headers).status_code == 200
@@ -156,22 +156,22 @@ def test_upload_persists_images_and_computes_each_feature_once(ai_client, admin_
 
 def test_duplicate_and_invalid_uploads_are_rejected(ai_client, admin_headers):
     classes = classes_by_name(ai_client, admin_headers)
-    image = leaf_image(CLASS_COLORS["Mold"], 7)
-    assert upload(ai_client, admin_headers, classes["Mold"]["id"], [("a.png", image)]).status_code == 200
+    image = leaf_image(CLASS_COLORS["Powdery Mildew"], 7)
+    assert upload(ai_client, admin_headers, classes["Powdery Mildew"]["id"], [("a.png", image)]).status_code == 200
 
     again = upload(ai_client, admin_headers, classes["Healthy"]["id"], [("copy.png", image)])
     assert again.status_code == 409
     assert again.json()["error"]["code"] == "DUPLICATE_IMAGE"
-    assert "Mold" in again.json()["error"]["message"]
+    assert "Powdery Mildew" in again.json()["error"]["message"]
 
-    mixed = upload(ai_client, admin_headers, classes["Mold"]["id"], [("new.png", leaf_image(CLASS_COLORS["Mold"], 8)), ("evil.png", b"<?php ?>"), ("copy.png", image)])
+    mixed = upload(ai_client, admin_headers, classes["Powdery Mildew"]["id"], [("new.png", leaf_image(CLASS_COLORS["Powdery Mildew"], 8)), ("evil.png", b"<?php ?>"), ("copy.png", image)])
     assert mixed.status_code == 200
     assert [r["code"] for r in mixed.json()["rejected"]] == ["UNSUPPORTED_IMAGE", "DUPLICATE_IMAGE"]
     assert len(mixed.json()["uploaded"]) == 1
 
-    bad = upload(ai_client, admin_headers, classes["Mold"]["id"], [("x.jpg", b"not an image at all")])
+    bad = upload(ai_client, admin_headers, classes["Powdery Mildew"]["id"], [("x.jpg", b"not an image at all")])
     assert bad.status_code == 415
-    tiny = upload(ai_client, admin_headers, classes["Mold"]["id"], [("t.png", leaf_image((1, 1, 1), 1, size=8))])
+    tiny = upload(ai_client, admin_headers, classes["Powdery Mildew"]["id"], [("t.png", leaf_image((1, 1, 1), 1, size=8))])
     assert tiny.status_code == 422 and tiny.json()["error"]["code"] == "IMAGE_TOO_SMALL"
 
 
@@ -248,7 +248,7 @@ def test_dataset_changes_are_coalesced_into_one_debounced_job(ai_client, admin_h
     assert job["trigger"] == "AUTO"
     # Three more uploads arrive while the job is waiting: still exactly one job.
     for i in range(3):
-        upload(ai_client, admin_headers, classes["Mold"]["id"], [(f"m{i}.png", leaf_image(CLASS_COLORS["Mold"], 900 + i))])
+        upload(ai_client, admin_headers, classes["Powdery Mildew"]["id"], [(f"m{i}.png", leaf_image(CLASS_COLORS["Powdery Mildew"], 900 + i))])
     jobs = list(ai_client.app.state.ai.db.ai_jobs.find({}))
     assert len(jobs) == 1
     assert jobs[0]["coalesced_changes"] == 4  # 1 (dataset became ready) + 3 more uploads
@@ -280,13 +280,13 @@ def test_trained_model_records_metrics_mapping_and_artifact(ai_client, admin_hea
     status = train(ai_client, admin_headers)
     model = status["activeModel"]
     assert model["model"] == "dinov2_vits14" and model["modelDisplayName"] == "DINOv2 ViT-S/14"
-    assert [c["name"] for c in model["classes"]] == ["Healthy", "Spotting", "Mold"]
+    assert [c["name"] for c in model["classes"]] == ["Healthy", "Spotting", "Powdery Mildew"]
     assert model["trainCount"] + model["validationCount"] == 12
     assert all(c["validationCount"] >= 1 for c in model["classes"])
     metrics = model["metrics"]
     for key in ("accuracy", "macroPrecision", "macroRecall", "macroF1"):
         assert 0.0 <= metrics[key] <= 1.0
-    assert metrics["confusionMatrix"]["labels"] == ["Healthy", "Spotting", "Mold"]
+    assert metrics["confusionMatrix"]["labels"] == ["Healthy", "Spotting", "Powdery Mildew"]
     assert sum(map(sum, metrics["confusionMatrix"]["matrix"])) == model["validationCount"]
     assert (ai_settings.ai.data_dir / "models" / "model_v1.npz").is_file()
     assert (ai_settings.ai.data_dir / "models" / "model_v1.json").is_file()
@@ -380,19 +380,19 @@ def test_leaf_assessment_returns_class_confidence_and_model_version(ai_client, a
 
     public = ai_client.get("/api/v1/ai/status", headers=admin_headers).json()
     assert public == {**public, "ready": True, "modelVersion": 1, "model": "dinov2_vits14"}
-    assert sorted(public["classes"]) == ["Healthy", "Mold", "Spotting"]
+    assert sorted(public["classes"]) == ["Healthy", "Powdery Mildew", "Spotting"]
 
 
 def test_assessment_never_modifies_the_dataset(ai_client, admin_headers):
     train(ai_client, admin_headers)
     service = ai_client.app.state.ai
     before = (service.db.classifier_images.count_documents({}), service.db.ai_jobs.count_documents({}))
-    assess(ai_client, admin_headers, leaf_image(CLASS_COLORS["Mold"], 31337))
+    assess(ai_client, admin_headers, leaf_image(CLASS_COLORS["Powdery Mildew"], 31337))
     assert (service.db.classifier_images.count_documents({}), service.db.ai_jobs.count_documents({})) == before
 
 
 def test_model_not_ready_is_explicit(ai_client, admin_headers):
-    response = assess(ai_client, admin_headers, leaf_image(CLASS_COLORS["Mold"], 3))
+    response = assess(ai_client, admin_headers, leaf_image(CLASS_COLORS["Powdery Mildew"], 3))
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "AI_MODEL_NOT_READY"
     assert ai_client.get("/api/v1/ai/status", headers=admin_headers).json()["ready"] is False
@@ -417,7 +417,7 @@ def test_model_head_for_on_device_inference(ai_client, admin_headers, db, fake_e
 
     train(ai_client, admin_headers)
     classes = classes_by_name(ai_client, admin_headers)
-    ai_client.patch(f"{API}/classifiers/{classes['Mold']['id']}", json={"name": "Sooty Mold"}, headers=admin_headers)
+    ai_client.patch(f"{API}/classifiers/{classes['Powdery Mildew']['id']}", json={"name": "Sooty Mold"}, headers=admin_headers)
     # Field testers download it too: their phones run the assessment.
     user_repository.create_if_missing(db, "field@example.com", hash_password("field-pass"), "Field User")
     token = ai_client.post("/api/v1/auth/login", json={"email": "field@example.com", "password": "field-pass"}).json()["access_token"]
@@ -451,7 +451,7 @@ def test_rename_keeps_model_and_deleting_a_model_class_invalidates_it(ai_client,
     renamed = assess(ai_client, admin_headers, leaf_image(CLASS_COLORS["Spotting"], 555))
     assert renamed.json()["className"] == "Leaf Spot"
 
-    deleted = ai_client.delete(f"{API}/classifiers/{classes['Mold']['id']}", headers=admin_headers)
+    deleted = ai_client.delete(f"{API}/classifiers/{classes['Powdery Mildew']['id']}", headers=admin_headers)
     assert deleted.status_code == 200
     assert deleted.json() | {"job": None} == {"deletedImages": 4, "modelInvalidated": True, "datasetVersion": deleted.json()["datasetVersion"], "job": None}
     assert assess(ai_client, admin_headers, leaf_image(CLASS_COLORS["Healthy"], 556)).json()["error"]["code"] == "AI_MODEL_NOT_READY"
@@ -471,5 +471,5 @@ def test_new_class_appears_in_the_class_mapping_after_rebuild(ai_client, admin_h
     assert upload(ai_client, admin_headers, other["id"], images).json()["job"]["status"] == "QUEUED"
     run_jobs(ai_client)
     status = ai_client.get(f"{API}/ai/model", headers=admin_headers).json()
-    assert [c["name"] for c in status["activeModel"]["classes"]] == ["Healthy", "Spotting", "Mold", "Other"]
+    assert [c["name"] for c in status["activeModel"]["classes"]] == ["Healthy", "Spotting", "Powdery Mildew", "Other"]
     assert assess(ai_client, admin_headers, leaf_image((30, 30, 200), 4999)).json()["className"] == "Other"

@@ -41,11 +41,19 @@ class Settings:
     # Failed sign-ins per email before a temporary lockout (0 disables), and the window.
     login_max_failures: int = 10
     login_window_seconds: int = 15 * 60
+    # "local": tree and leaf-assessment photos are stored under upload_dir (local Docker volume).
+    # "disabled": no durable disk (e.g. Render free): photo uploads are acknowledged without storing
+    # the bytes, so records sync and each photo stays on the phone that took it.
+    image_storage: str = "local"
     ai: AiSettings = field(default_factory=AiSettings)
 
     @property
     def is_development(self) -> bool:
         return self.environment == "development"
+
+    @property
+    def image_storage_enabled(self) -> bool:
+        return self.image_storage == "local"
 
     @property
     def tree_image_dir(self) -> Path:
@@ -69,6 +77,18 @@ def _load_local_env_file() -> None:
     if env_file.is_file():
         load_dotenv(env_file, override=False)
         logger.info("Loaded local settings from backend/.env (process environment takes precedence).")
+
+
+IMAGE_STORAGE_MODES = ("local", "disabled")
+
+
+def _image_storage_mode() -> str:
+    """IMAGE_STORAGE wins; otherwise Render (which sets RENDER=true and has an ephemeral disk)
+    defaults to "disabled" so photos are never written where they would silently vanish."""
+    mode = os.environ.get("IMAGE_STORAGE", "").strip().lower() or ("disabled" if _env_bool("RENDER", False) else "local")
+    if mode not in IMAGE_STORAGE_MODES:
+        raise RuntimeError(f"IMAGE_STORAGE must be one of {', '.join(IMAGE_STORAGE_MODES)}; got {mode!r}.")
+    return mode
 
 
 def load_settings() -> Settings:
@@ -96,5 +116,6 @@ def load_settings() -> Settings:
         web_dist_dir=Path(os.environ.get("WEB_DIST_DIR", "").strip() or str(BACKEND_ROOT / "web_dist")),
         login_max_failures=int(os.environ.get("LOGIN_MAX_FAILURES", "10")),
         login_window_seconds=int(os.environ.get("LOGIN_WINDOW_SECONDS", str(15 * 60))),
+        image_storage=_image_storage_mode(),
         ai=load_ai_settings(),
     )

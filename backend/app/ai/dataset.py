@@ -42,6 +42,13 @@ class SplitItem:
     image_id: str
     class_id: str
     sha256: str
+    # Images that must stay on the same side (e.g. repeated shots of one leaf, set by a dataset
+    # import). None: identical content (the SHA-256) is the group.
+    group: str | None = None
+
+    @property
+    def group_key(self) -> str:
+        return self.group or self.sha256
 
 
 def _order_key(seed: int, sha256: str) -> str:
@@ -51,13 +58,13 @@ def _order_key(seed: int, sha256: str) -> str:
 def split_train_validation(items: Iterable[SplitItem], fraction: float, seed: int) -> tuple[list[SplitItem], list[SplitItem]]:
     """Stratified per class, deterministic for a given seed and dataset, independent of upload order.
 
-    Images with identical content (same SHA-256) form one group and always land on the same side,
-    so an exact duplicate can never leak from training into validation. Each class keeps at least
-    one group on each side.
+    Images of one group (``SplitItem.group``, else identical content) always land on the same
+    side, so an exact duplicate or a repeated shot of the same leaf can never leak from training
+    into validation. Each class keeps at least one group on each side.
     """
     groups: dict[str, dict[str, list[SplitItem]]] = defaultdict(lambda: defaultdict(list))
     for item in items:
-        groups[item.class_id][item.sha256].append(item)
+        groups[item.class_id][item.group_key].append(item)
 
     train: list[SplitItem] = []
     validation: list[SplitItem] = []
@@ -65,7 +72,7 @@ def split_train_validation(items: Iterable[SplitItem], fraction: float, seed: in
         by_hash = groups[class_id]
         ordered = sorted(by_hash, key=lambda sha: _order_key(seed, sha))
         if len(ordered) < 2:
-            raise ValueError(f"Class {class_id} needs at least two distinct images for a validation split.")
+            raise ValueError(f"Class {class_id} needs at least two distinct image groups for a validation split.")
         validation_groups = min(max(1, round(len(ordered) * fraction)), len(ordered) - 1)
         for i, sha in enumerate(ordered):
             (validation if i < validation_groups else train).extend(by_hash[sha])

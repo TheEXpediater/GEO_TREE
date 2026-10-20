@@ -1,0 +1,32 @@
+# Render Blueprint: the lightweight GEO Tree API only (README "Hosted API on Render + MongoDB Atlas").
+#
+# - No AI on Render: DINOv2 training/feature caching/export stay in local Docker, and phones classify
+#   leaves on-device with the model bundled in the APK. Only backend/requirements.txt is installed.
+# - No photo storage on Render: the free filesystem is ephemeral, so IMAGE_STORAGE=disabled (also the
+#   automatic default when RENDER=true). Records sync to MongoDB Atlas; photos stay on the phones.
+# - Secrets (MONGO_URI, JWT_SECRET) are entered in the Render dashboard (sync: false), never here.
+#
+# The existing service https://geo-tree.onrender.com was created in the dashboard; keep its settings
+# equal to this file (root directory, build/start command, health check, environment).
+services:
+  - type: web
+    name: geo-tree
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: MONGO_DATABASE
+        value: geo_tree
+      - key: AI_ENABLED
+        value: "false"
+      - key: IMAGE_STORAGE
+        value: disabled
+      - key: MONGO_URI
+        sync: false
+      - key: JWT_SECRET
+        sync: false

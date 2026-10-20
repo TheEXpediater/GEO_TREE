@@ -67,9 +67,15 @@ ai_test_results/
 *.onnx
 *.npy
 *.npz
-# On-device leaf model bundled into the APK (trained head + DINOv2 weights). Regenerate with
+# On-device leaf model bundled into the APK IS committed (the ONNX backbone via Git LFS, see
+# .gitattributes): android/app/src/main/assets/leaf_model/. Regenerate it with
 # backend/scripts/export_mobile_model.py; the build verifies it against manifest.json.
-android/app/src/main/assets/leaf_model/
+!android/app/src/main/assets/leaf_model/dinov2_vits14_336.onnx
+
+# Classifier training datasets (raw contributor photos) and their extracted copies stay local
+data.zip
+data-sets.zip
+data-zip.zip
 
 # APK release staging (tools/distribution/prepare_release.py)
 tools/distribution/release/

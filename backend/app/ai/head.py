@@ -98,20 +98,31 @@ def _fit(x: np.ndarray, y: np.ndarray, c: float, seed: int):
     return model
 
 
-def _select_c(x: np.ndarray, y: np.ndarray, seed: int) -> tuple[float, dict[str, float]]:
-    """Mean macro-F1 over stratified folds of the training split. Ties go to the smaller C."""
-    from sklearn.model_selection import StratifiedKFold
+def _select_c(x: np.ndarray, y: np.ndarray, seed: int, groups: list[str] | None = None) -> tuple[float, dict[str, float]]:
+    """Mean macro-F1 over stratified folds of the training split. Ties go to the smaller C.
+
+    With ``groups`` (e.g. repeated shots of one leaf), a group never spans a fold boundary, so
+    near-duplicates cannot make cross-validation optimistic.
+    """
+    from sklearn.model_selection import StratifiedGroupKFold, StratifiedKFold
 
     from app.ai.metrics import classification_metrics
 
-    folds = min(MAX_CV_FOLDS, int(np.bincount(y).min()))
+    if groups is None:
+        folds = min(MAX_CV_FOLDS, int(np.bincount(y).min()))
+        splitter = StratifiedKFold(n_splits=max(folds, 2), shuffle=True, random_state=seed)
+        split_args: tuple = (x, y)
+    else:
+        per_class = [len({g for g, label in zip(groups, y) if label == k}) for k in np.unique(y)]
+        folds = min(MAX_CV_FOLDS, min(per_class))
+        splitter = StratifiedGroupKFold(n_splits=max(folds, 2), shuffle=True, random_state=seed)
+        split_args = (x, y, np.asarray(groups))
     if folds < 2:
         return DEFAULT_C, {}
-    splitter = StratifiedKFold(n_splits=folds, shuffle=True, random_state=seed)
     scores: dict[str, float] = {}
     for c in C_GRID:
         fold_scores = []
-        for train_index, test_index in splitter.split(x, y):
+        for train_index, test_index in splitter.split(*split_args):
             model = _fit(x[train_index], y[train_index], c, seed)
             predicted = model.predict(x[test_index])
             fold_scores.append(classification_metrics([str(v) for v in y[test_index]], [str(v) for v in predicted])["macroF1"])
@@ -120,8 +131,9 @@ def _select_c(x: np.ndarray, y: np.ndarray, seed: int) -> tuple[float, dict[str,
     return best, scores
 
 
-def fit_head(features: np.ndarray, labels: list[str], class_ids: list[str], seed: int) -> LinearHead:
-    """Fits the head. Every class in ``class_ids`` must appear in ``labels``."""
+def fit_head(features: np.ndarray, labels: list[str], class_ids: list[str], seed: int, groups: list[str] | None = None) -> LinearHead:
+    """Fits the head. Every class in ``class_ids`` must appear in ``labels``. ``groups`` (one per
+    row) keeps related images together while choosing the regularization strength."""
     if len(class_ids) < 2:
         raise ValueError("At least two classes are required.")
     missing = set(class_ids) - set(labels)
@@ -131,7 +143,7 @@ def fit_head(features: np.ndarray, labels: list[str], class_ids: list[str], seed
     y = np.array([index[label] for label in labels])
     x, mean, scale = _prepare(features)
 
-    c, scores = _select_c(x, y, seed)
+    c, scores = _select_c(x, y, seed, groups)
     model = _fit(x, y, c, seed)
     weights, bias = model.coef_, model.intercept_
     if len(class_ids) == 2:

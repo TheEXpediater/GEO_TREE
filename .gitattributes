@@ -1,3 +1,6 @@
 # Windows launchers must keep CRLF line endings.
 *.bat text eol=crlf
 *.ps1 text eol=crlf
+
+# On-device leaf model backbone (87 MB) is stored with Git LFS.
+android/app/src/main/assets/leaf_model/*.onnx filter=lfs diff=lfs merge=lfs -text

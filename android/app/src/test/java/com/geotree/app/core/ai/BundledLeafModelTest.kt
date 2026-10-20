@@ -36,7 +36,7 @@ class BundledLeafModelTest {
         assertEquals(HeadSource.BUNDLED, model.headSource)
         assertEquals(manifest.backbone.bytes, model.backboneFile.length())
         assertNull(model.head.problemWith(manifest))
-        assertEquals(listOf("Healthy", "Spotting", "Mold"), model.head.classes.map { it.name })
+        assertEquals(listOf("Healthy", "Spotting", "Powdery Mildew"), model.head.classes.map { it.name })
         // The export verified ONNX Runtime against the server's PyTorch features on every dataset image.
         val parity = File(assetRoot, "leaf_model/manifest.json").readText()
         assertEquals(true, parity.contains("\"classAgreement\": 1.0"))

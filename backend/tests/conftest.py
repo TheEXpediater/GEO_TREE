@@ -43,7 +43,7 @@ def auth_headers(client: TestClient) -> dict[str, str]:
 # The AI tests never load PyTorch or download DINOv2 weights: FakeExtractor stands in for the
 # backbone and derives a deterministic 384-d feature from each image's mean colour.
 
-CLASS_COLORS = {"Healthy": (40, 160, 60), "Spotting": (140, 90, 40), "Mold": (205, 205, 190)}
+CLASS_COLORS = {"Healthy": (40, 160, 60), "Spotting": (140, 90, 40), "Powdery Mildew": (205, 205, 190)}
 
 
 class FakeExtractor:

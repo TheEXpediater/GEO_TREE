@@ -215,6 +215,8 @@ async def replace_tree_image(
 ) -> dict[str, Any]:
     """Uploads or replaces the registration photo (validated by content, stored under a generated name)."""
     tree = _require_tree(db, tree_id)
+    if not settings.image_storage_enabled:
+        raise ApiError(503, "IMAGE_STORAGE_DISABLED", "This server does not store photos; registration photos stay on the field phones.")
     data = await file.read(settings.max_image_bytes + 1)
     image_path = image_storage.save_tree_image(settings.upload_dir, tree["id"], data, settings.max_image_bytes)
     updated = tree_sync.attach_image(db, tree["id"], image_path)

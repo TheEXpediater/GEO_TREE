@@ -12,7 +12,7 @@ plugins {
 // Default server: the LOCAL Docker backend through the emulator host alias. The DINOv2 leaf
 // assessment milestone is tested locally (never against the hosted deployment). Override per
 // build, e.g. `-Pgeotree.baseUrl=http://192.168.1.20:8000` (phone on the LAN) or
-// `-Pgeotree.baseUrl=https://geotree.museuma7k9x3.tech` (production APK on the Hostinger VPS);
+// `-Pgeotree.baseUrl=https://geo-tree.onrender.com` (client APK against the hosted Render API);
 // the app also lets the user change and verify the server URL at runtime.
 val defaultBaseUrl = (findProperty("geotree.baseUrl") as String?) ?: "http://10.0.2.2:8000"
 
@@ -52,8 +52,8 @@ android {
         applicationId = "com.geotree.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 10
-        versionName = "0.7.0"
+        versionCode = 11
+        versionName = "0.8.0"
         buildConfigField("String", "DEFAULT_BASE_URL", "\"$defaultBaseUrl\"")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

@@ -38,12 +38,12 @@ def api_assess(client, headers):
 
 def test_discover_uses_top_level_folder_as_label(tmp_path):
     folder = make_input(tmp_path)
-    (folder / "mold" / "nested").mkdir()
-    (folder / "mold" / "nested" / "deep.PNG").write_bytes(leaf_image((1, 2, 3), 1))
+    (folder / "powdery mildew" / "nested").mkdir()
+    (folder / "powdery mildew" / "nested" / "deep.PNG").write_bytes(leaf_image((1, 2, 3), 1))
     found = discover_images(folder)
     assert len(found) == 10
-    assert {label for _, label in found} == {"healthy", "spotting", "mold"}
-    assert any(path.name == "deep.PNG" and label == "mold" for path, label in found)
+    assert {label for _, label in found} == {"healthy", "spotting", "powdery mildew"}
+    assert any(path.name == "deep.PNG" and label == "powdery mildew" for path, label in found)
 
 
 def test_batch_evaluation_reports_real_api_predictions_without_touching_the_dataset(ai_client, admin_headers, tmp_path):
@@ -52,21 +52,21 @@ def test_batch_evaluation_reports_real_api_predictions_without_touching_the_data
     before = (db.classifier_images.count_documents({}), db.ai_jobs.count_documents({}), db.ai_models.count_documents({}))
     folder = make_input(tmp_path)
 
-    result = evaluate(discover_images(folder), api_assess(ai_client, admin_headers), ["Healthy", "Spotting", "Mold"], folder)
+    result = evaluate(discover_images(folder), api_assess(ai_client, admin_headers), ["Healthy", "Spotting", "Powdery Mildew"], folder)
 
     assert result["success"] is True
     assert result["summary"]["images"] == 9 and result["summary"]["errors"] == 0
-    assert result["summary"]["expectedCounts"] == {"Healthy": 3, "Mold": 3, "Spotting": 3}
+    assert result["summary"]["expectedCounts"] == {"Healthy": 3, "Powdery Mildew": 3, "Spotting": 3}
     assert result["summary"]["modelVersions"] == [1]
     assert result["rows"][0]["expected"] in CLASS_COLORS  # folder "healthy" matched to class "Healthy"
     assert result["metrics"]["samples"] == 9
-    assert result["metrics"]["confusionMatrix"]["labels"] == ["Healthy", "Spotting", "Mold"]
+    assert result["metrics"]["confusionMatrix"]["labels"] == ["Healthy", "Spotting", "Powdery Mildew"]
     assert (db.classifier_images.count_documents({}), db.ai_jobs.count_documents({}), db.ai_models.count_documents({})) == before
 
 
 def test_batch_run_without_a_model_is_not_successful(ai_client, admin_headers, tmp_path):
     folder = make_input(tmp_path, per_class=1)
-    result = evaluate(discover_images(folder), api_assess(ai_client, admin_headers), ["Healthy", "Spotting", "Mold"], folder)
+    result = evaluate(discover_images(folder), api_assess(ai_client, admin_headers), ["Healthy", "Spotting", "Powdery Mildew"], folder)
     assert result["success"] is False
     assert all(row["error"].startswith("AI_MODEL_NOT_READY") for row in result["rows"])
 
@@ -74,7 +74,7 @@ def test_batch_run_without_a_model_is_not_successful(ai_client, admin_headers, t
 def test_report_is_written_verified_and_input_cleaned_only_after_success(ai_client, admin_headers, tmp_path):
     train(ai_client, admin_headers)
     folder = make_input(tmp_path)
-    result = evaluate(discover_images(folder), api_assess(ai_client, admin_headers), ["Healthy", "Spotting", "Mold"], folder)
+    result = evaluate(discover_images(folder), api_assess(ai_client, admin_headers), ["Healthy", "Spotting", "Powdery Mildew"], folder)
     report = {"startedAt": "s", "finishedAt": "f", "server": "http://localhost:8000", "modelDisplayName": "DINOv2 ViT-S/14", "confidenceThreshold": 0.6, **result}
 
     results = write_report(report, tmp_path / "ai_test_results")
@@ -116,6 +116,6 @@ def test_holdout_split_is_deterministic_and_keeps_both_sides(tmp_path):
             images.append((path, name))
     keep, holdout = split_holdout(images, 0.25)
     assert len(holdout) == 6 and len(keep) == 18
-    assert sorted(label for _, label in holdout) == sorted(["Healthy", "Spotting", "Mold"] * 2)
+    assert sorted(label for _, label in holdout) == sorted(["Healthy", "Spotting", "Powdery Mildew"] * 2)
     assert split_holdout(list(reversed(images)), 0.25)[1] == holdout or {p for p, _ in split_holdout(list(reversed(images)), 0.25)[1]} == {p for p, _ in holdout}
     assert not {p for p, _ in keep} & {p for p, _ in holdout}
