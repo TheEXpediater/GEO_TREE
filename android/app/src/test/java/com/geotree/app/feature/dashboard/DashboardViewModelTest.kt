@@ -225,4 +225,26 @@ class DashboardViewModelTest {
         advanceUntilIdle()
         assertTrue(vm.state.value.authRequired)
     }
+
+    @Test
+    fun `administrators get the admin shortcut on the dashboard and field testers do not`() = runTest {
+        val valid = 1_790_000_000_000L + 86_400_000L
+        for ((role, expected) in listOf("ADMIN" to true, "SUPER_ADMIN" to true, "FIELD_TESTER" to false, null to false)) {
+            val vm = viewModel(session = Session("t", "someone@example.com", valid, role = role))
+            advanceUntilIdle()
+            assertEquals("role $role", expected, vm.state.value.isAdmin)
+        }
+    }
+
+    @Test
+    fun `trees archived on the web are hidden from counts and recent trees`() = runTest {
+        dao.rows.value = listOf(
+            row("KEEP", SyncStatus.SYNCED, 1),
+            row("GONE", SyncStatus.SYNCED, 2).copy(archived = true),
+        ).associateBy { it.id }
+        val vm = viewModel()
+        advanceUntilIdle()
+        assertEquals(1, vm.state.value.counts.total)
+        assertEquals(listOf("KEEP"), vm.state.value.recentTrees.map { it.treeCode })
+    }
 }

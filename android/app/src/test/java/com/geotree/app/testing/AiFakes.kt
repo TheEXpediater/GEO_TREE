@@ -1,6 +1,13 @@
 package com.geotree.app.testing
 
 import android.database.sqlite.SQLiteConstraintException
+import com.geotree.app.core.ai.ClassProbability
+import com.geotree.app.core.ai.HeadSource
+import com.geotree.app.core.ai.InferenceTimings
+import com.geotree.app.core.ai.LeafClassifier
+import com.geotree.app.core.ai.LeafInferenceErrors
+import com.geotree.app.core.ai.LeafModelInfo
+import com.geotree.app.core.ai.LeafPrediction
 import com.geotree.app.core.database.AssessmentStatus
 import com.geotree.app.core.database.LeafAssessmentDao
 import com.geotree.app.core.database.LeafAssessmentEntity
@@ -15,24 +22,28 @@ import com.geotree.app.data.remote.DatasetImageDto
 import com.geotree.app.data.remote.DeleteClassResultDto
 import com.geotree.app.data.remote.DeleteImageResultDto
 import com.geotree.app.data.remote.GeoTreeAiApi
-import com.geotree.app.data.remote.LeafAssessmentDto
 import com.geotree.app.data.remote.ModelStatusDto
 import com.geotree.app.data.remote.ReadinessDto
 import com.geotree.app.data.remote.TrainingJobDto
 import com.geotree.app.data.remote.UploadResultDto
+import com.geotree.app.data.repository.AiResult
 import com.geotree.app.data.repository.LocalImage
 import com.geotree.app.testing.FakeGeoTreeServer.Companion.httpError
+import java.io.File
 import java.io.IOException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.map
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
-import okhttp3.RequestBody
+import okhttp3.ResponseBody
+import okhttp3.ResponseBody.Companion.toResponseBody
 import okio.Buffer
 
 /**
  * In-memory model of the FastAPI AI routes: class CRUD with unique names, per-file uploads with
- * duplicate detection, a scriptable model status sequence, and leaf assessment.
+ * duplicate detection, a scriptable model status sequence, and the on-device model's status and
+ * classifier-head download.
  */
 class FakeAiServer : GeoTreeAiApi {
     val classes = linkedMapOf<String, ClassifierClassDto>()
@@ -45,9 +56,12 @@ class FakeAiServer : GeoTreeAiApi {
     /** Statuses returned by successive modelStatus() calls; the last one repeats. */
     val statusSequence = ArrayDeque(listOf("UNTRAINED"))
     var modelStatusCalls = 0
-    var assessment: LeafAssessmentDto? = null
-    var assessmentFailure: Exception? = null
-    var assessCalls = 0
+    /** The server's active model version for field users (null = no model). */
+    var activeModelVersion: Int? = null
+    var activeClasses = listOf("Healthy", "Mold", "Spotting")
+    /** What GET /api/v1/ai/model/head returns; null = 404 (a server without the endpoint). */
+    var headBytes: ByteArray? = null
+    var headCalls = 0
     var uploadCalls = 0
     var failDeleteFor: String? = null
 
@@ -135,22 +149,49 @@ class FakeAiServer : GeoTreeAiApi {
 
     override suspend fun aiStatus(): AiStatusDto {
         if (unreachable) throw IOException("Failed to connect")
-        val ready = assessment != null
-        return AiStatusDto(ready, if (ready) "READY" else "NOT_READY", "dinov2_vits14", "DINOv2 ViT-S/14", if (ready) 3 else null, listOf("Healthy", "Mold", "Spotting"), 0.6)
+        val version = activeModelVersion
+        return AiStatusDto(version != null, if (version != null) "READY" else "NOT_READY", "dinov2_vits14", "DINOv2 ViT-S/14", version, if (version != null) activeClasses else emptyList(), 0.6)
     }
 
-    override suspend fun assessLeaf(file: MultipartBody.Part, treeId: RequestBody?): LeafAssessmentDto {
-        assessCalls++
-        if (unreachable) throw IOException("Failed to connect to /10.0.2.2:8000")
-        assessmentFailure?.let { throw it }
-        return assessment ?: throw httpError(409, "AI_MODEL_NOT_READY", "No trained tamarind leaf model is active yet.")
+    override suspend fun modelHead(): ResponseBody {
+        headCalls++
+        if (unreachable) throw IOException("Failed to connect")
+        val bytes = headBytes ?: throw httpError(404, "NOT_FOUND", "Not Found")
+        return bytes.toResponseBody("application/json".toMediaType())
+    }
+}
+
+/**
+ * The on-device classifier, scripted: [prediction] is returned for every photo; null means no
+ * usable model (AI_MODEL_NOT_READY). Records which photos were classified.
+ */
+class FakeLeafClassifier : LeafClassifier {
+    var prediction: LeafPrediction? = null
+    var failure: AiResult.Failed? = null
+    var classifyCalls = 0
+    val classified = mutableListOf<File>()
+
+    override suspend fun status(): AiResult<LeafModelInfo> {
+        val p = prediction ?: return LeafInferenceErrors.modelUnavailable(NO_MODEL)
+        return AiResult.Ok(LeafModelInfo(p.model, p.modelDisplayName, p.modelVersion, listOf("Healthy", "Spotting", "Mold"), 0.6, HeadSource.BUNDLED))
+    }
+
+    override suspend fun classify(image: File): AiResult<LeafPrediction> {
+        classifyCalls++
+        classified += image
+        failure?.let { return it }
+        return prediction?.let { AiResult.Ok(it) } ?: LeafInferenceErrors.modelUnavailable(NO_MODEL)
     }
 
     companion object {
-        fun result(className: String = "Spotting", confidence: Double = 0.94, version: Int = 7) = LeafAssessmentDto(
+        const val NO_MODEL = "The on-device leaf model is missing."
+        val inferenceFailure = LeafInferenceErrors.inferenceFailed("test")
+
+        fun result(className: String = "Spotting", confidence: Double = 0.94, version: Int = 7) = LeafPrediction(
             classId = "c-$className", className = className, confidence = confidence, uncertain = confidence < 0.6,
             confidenceThreshold = 0.6, model = "dinov2_vits14", modelDisplayName = "DINOv2 ViT-S/14", modelVersion = version,
-            assessedAt = "2026-10-08T02:00:00Z",
+            probabilities = listOf(ClassProbability("c-$className", className, confidence)),
+            timings = InferenceTimings(0, 0, 0, 0),
         )
     }
 }

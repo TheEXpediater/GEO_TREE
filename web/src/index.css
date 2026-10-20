@@ -1,0 +1,154 @@
+@import "@fontsource/ibm-plex-sans/400.css";
+@import "@fontsource/ibm-plex-sans/500.css";
+@import "@fontsource/ibm-plex-sans/600.css";
+@import "@fontsource/ibm-plex-sans/700.css";
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/ibm-plex-mono/500.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* GEO Tree palette (RGB channels so Tailwind opacity modifiers work). Shared with the Android app:
+   deep forest, tamarind/moss green, warm clay, sand/cream, charcoal; amber only for attention. */
+:root {
+  --forest: 31 61 43;        /* #1F3D2B */
+  --forest-deep: 20 41 29;   /* #14291D */
+  --forest-soft: 228 236 226;
+  --tamarind: 79 107 47;     /* #4F6B2F */
+  --moss: 94 122 58;         /* #5E7A3A */
+  --moss-soft: 233 239 222;
+  --clay: 166 90 50;         /* #A65A32 */
+  --clay-soft: 246 230 218;
+  --amber: 168 112 14;       /* #A8700E, text-safe on cream */
+  --amber-soft: 250 239 210;
+  --danger: 179 38 30;       /* #B3261E */
+  --danger-soft: 251 228 225;
+  --sky: 44 98 128;
+  --sky-soft: 226 238 244;
+  --cream: 251 248 241;      /* #FBF8F1 */
+  --sand: 244 238 223;       /* #F4EEDF */
+  --surface: 255 255 255;
+  --line: 230 223 206;
+  --line-strong: 205 196 175;
+  --ink: 35 38 42;           /* #23262A */
+  --ink-muted: 84 88 82;
+  --ink-faint: 128 131 122;
+  color-scheme: light;
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    @apply bg-cream font-sans text-[15px] text-ink antialiased;
+  }
+  :focus-visible {
+    outline: 2px solid rgb(var(--moss));
+    outline-offset: 2px;
+  }
+  ::selection {
+    background: rgb(var(--moss) / 0.25);
+  }
+  h1, h2, h3 {
+    @apply tracking-tight text-ink;
+  }
+}
+
+@layer components {
+  .num {
+    font-variant-numeric: tabular-nums;
+  }
+  /* Subtle cartographic grid used behind the sign-in panel and empty states. */
+  .survey-grid {
+    background-image:
+      linear-gradient(rgb(var(--forest) / 0.05) 1px, transparent 1px),
+      linear-gradient(90deg, rgb(var(--forest) / 0.05) 1px, transparent 1px);
+    background-size: 32px 32px;
+  }
+  .skeleton {
+    @apply relative overflow-hidden rounded-md bg-sand;
+  }
+  .skeleton::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.55), transparent);
+    animation: shimmer 1.4s infinite;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+  }
+}
+
+/* Web maps (Leaflet). Marker styling follows the Android field map: forest-green dot, white ring;
+   the selected marker is larger with a clay ring. */
+.gt-map {
+  font-family: inherit;
+}
+.gt-map .leaflet-control-attribution {
+  font-size: 11px;
+  background: rgb(var(--cream) / 0.9);
+}
+.gt-map .leaflet-bar a {
+  color: rgb(var(--ink));
+}
+.gt-marker-host {
+  background: transparent;
+  border: 0;
+}
+.gt-marker {
+  display: flex;
+  height: 100%;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  border: 3px solid #fff;
+  background: rgb(var(--forest));
+  box-shadow: 0 1px 4px rgb(20 41 29 / 0.45);
+  transition: transform 120ms ease-out;
+}
+.gt-marker:hover {
+  transform: scale(1.12);
+}
+.gt-marker--archived {
+  background: rgb(var(--ink-faint));
+  opacity: 0.85;
+}
+.gt-marker--evidence {
+  background: rgb(var(--moss));
+}
+.gt-marker--evidence-uncertain {
+  background: rgb(var(--moss));
+  border-color: #b8860b;
+}
+.gt-marker--evidence-failed {
+  background: rgb(var(--moss));
+  border-color: #a8432a;
+}
+.gt-marker.is-selected {
+  border-color: rgb(var(--clay));
+  box-shadow: 0 0 0 4px rgb(var(--clay) / 0.25), 0 2px 6px rgb(20 41 29 / 0.5);
+}
+.gt-marker__label {
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.leaflet-marker-icon:focus-visible .gt-marker,
+.leaflet-marker-icon:focus-visible {
+  outline: 3px solid rgb(var(--clay));
+  outline-offset: 2px;
+  border-radius: 9999px;
+}

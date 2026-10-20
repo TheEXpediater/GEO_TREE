@@ -9,7 +9,7 @@ import com.geotree.app.data.model.TreeDraft
 import com.geotree.app.data.repository.CreateTreeResult
 import com.geotree.app.data.repository.LeafAssessmentRepository
 import com.geotree.app.data.repository.TreeRepository
-import com.geotree.app.testing.FakeAiServer
+import com.geotree.app.testing.FakeLeafClassifier
 import com.geotree.app.testing.FakeGeoTreeServer
 import com.geotree.app.testing.FakeLeafAssessmentDao
 import com.geotree.app.testing.FakeTreeDao
@@ -42,14 +42,15 @@ class LeafAssessmentSyncTest {
     private val server = FakeGeoTreeServer()
     private var ids = 0
     private val trees = TreeRepository(treeDao, clock = { 1_790_000_100_000L + ids }, newId = { "tree-${++ids}" })
-    private val assessments = LeafAssessmentRepository(leafDao, { FakeAiServer() }, scope = workScope)
+    private val assessments = LeafAssessmentRepository(leafDao, FakeLeafClassifier(), scope = workScope)
     private lateinit var preferences: SyncPreferences
+    private lateinit var sessions: SessionStore
     private lateinit var engine: SyncEngine
 
     @Before
     fun setUp() = runTest {
         val dataStore = testDataStore(temp.newFolder(), storeScope)
-        val sessions = SessionStore(dataStore)
+        sessions = SessionStore(dataStore)
         preferences = SyncPreferences(dataStore)
         sessions.save(Session("token-123", "admin@gmail.com", 0))
         engine = SyncEngine(trees, { server }, sessions, preferences, SyncStatusTracker(), leafAssessments = assessments)
@@ -100,6 +101,47 @@ class LeafAssessmentSyncTest {
             assertTrue(local.serverVersion!! > 0)
         }
         assertEquals("FAILED", server.assessments.getValue("a3").status)
+    }
+
+    @Test
+    fun `scans assessed on the device without a server sync once after reconnecting`() = runTest {
+        val classifier = FakeLeafClassifier().apply { prediction = FakeLeafClassifier.result("Mold", 0.88, version = 1) }
+        val onDevice = LeafAssessmentRepository(leafDao, classifier, scope = workScope)
+        var modelUpdates = 0
+        val engine = SyncEngine(
+            trees, { server }, sessions, preferences, SyncStatusTracker(), leafAssessments = onDevice,
+            modelUpdate = { modelUpdates++; error("server without the classifier endpoint") },
+        )
+        val t = tree("GEO-TAM-009")
+        server.healthy = false // airplane mode: no server at all
+
+        val ids = (1..3).map { n ->
+            onDevice.start(t.id, temp.newFile("offline-$n.jpg").apply { writeBytes(byteArrayOf(1, 2, 3)) }.absolutePath).id
+        }
+        assertEquals(3, ids.toSet().size)
+        ids.forEach { id ->
+            val record = leafDao.getById(id)!!
+            assertEquals(AssessmentStatus.COMPLETED, record.status) // a real result without any network
+            assertEquals("Mold", record.className)
+            assertEquals(SyncStatus.PENDING, record.syncStatus)
+        }
+        assertTrue(engine.sync() !is SyncOutcome.Completed)
+        assertEquals(0, modelUpdates)
+        assertTrue(server.assessments.isEmpty())
+        ids.forEach { assertEquals(SyncStatus.PENDING, leafDao.getById(it)!!.syncStatus) }
+
+        server.healthy = true // connectivity restored
+        val outcome = engine.sync() as SyncOutcome.Completed // a failing model update does not fail the sync
+        assertEquals(3, outcome.assessmentsPushed)
+        assertEquals(1, modelUpdates)
+        engine.sync()
+        assertEquals(ids.toSet(), server.assessments.keys)
+        server.assessments.values.forEach {
+            assertEquals("Mold", it.className)
+            assertEquals(1, it.modelVersion)
+            assertEquals("dinov2_vits14", it.modelName)
+        }
+        ids.forEach { assertEquals(SyncStatus.SYNCED, leafDao.getById(it)!!.syncStatus) }
     }
 
     @Test

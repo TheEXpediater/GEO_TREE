@@ -399,6 +399,51 @@ def test_model_not_ready_is_explicit(ai_client, admin_headers):
     assert assess(ai_client, admin_headers, b"plain text").status_code == 415
 
 
+def _phone_probabilities(document: dict, feature) -> list[float]:
+    """What the Android ClassifierHead computes from the downloaded document."""
+    import numpy as np
+
+    x = np.asarray(feature, dtype=np.float64)
+    x = x / max(np.linalg.norm(x), 1e-12)
+    x = (x - np.asarray(document["mean"])) / np.asarray(document["scale"])
+    logits = np.asarray(document["weights"]) @ x + np.asarray(document["bias"])
+    exp = np.exp(logits - logits.max())
+    return (exp / exp.sum()).tolist()
+
+
+def test_model_head_for_on_device_inference(ai_client, admin_headers, db, fake_extractor):
+    assert ai_client.get("/api/v1/ai/model/head").status_code == 401
+    assert ai_client.get("/api/v1/ai/model/head", headers=admin_headers).json()["error"]["code"] == "AI_MODEL_NOT_READY"
+
+    train(ai_client, admin_headers)
+    classes = classes_by_name(ai_client, admin_headers)
+    ai_client.patch(f"{API}/classifiers/{classes['Mold']['id']}", json={"name": "Sooty Mold"}, headers=admin_headers)
+    # Field testers download it too: their phones run the assessment.
+    user_repository.create_if_missing(db, "field@example.com", hash_password("field-pass"), "Field User")
+    token = ai_client.post("/api/v1/auth/login", json={"email": "field@example.com", "password": "field-pass"}).json()["access_token"]
+    response = ai_client.get("/api/v1/ai/model/head", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200, response.text
+    document = response.json()
+    assert document["formatVersion"] == 1
+    assert document["modelVersion"] == 1
+    assert document["embeddingModel"] == fake_extractor.cache_key
+    assert document["embeddingDimension"] == fake_extractor.dimension
+    assert [c["index"] for c in document["classes"]] == list(range(3))
+    assert "Sooty Mold" in [c["name"] for c in document["classes"]]  # current names, original class ids
+    assert len(document["weights"]) == 3 and all(len(row) == fake_extractor.dimension for row in document["weights"])
+    assert len(document["serverArtifactSha256"]) == 64
+    assert "artifact_path" not in str(document) and "/" not in document["serverArtifactSha256"]
+
+    # Phone math on the downloaded head == the server's own assessment for the same image.
+    image = leaf_image(CLASS_COLORS["Spotting"], 4242)
+    server = assess(ai_client, admin_headers, image).json()
+    phone = _phone_probabilities(document, fake_extractor.extract([image])[0])
+    by_id = {c["classId"]: p for c, p in zip(document["classes"], phone)}
+    for entry in server["probabilities"]:
+        assert abs(by_id[entry["classId"]] - entry["probability"]) < 1e-12
+    assert max(by_id, key=by_id.get) == server["classId"]
+
+
 def test_rename_keeps_model_and_deleting_a_model_class_invalidates_it(ai_client, admin_headers):
     train(ai_client, admin_headers)
     classes = classes_by_name(ai_client, admin_headers)

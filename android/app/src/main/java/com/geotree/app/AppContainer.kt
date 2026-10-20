@@ -4,6 +4,10 @@ import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.preferencesDataStore
+import com.geotree.app.core.ai.LeafClassifier
+import com.geotree.app.core.ai.LeafModelStore
+import com.geotree.app.core.ai.LeafModelUpdater
+import com.geotree.app.core.ai.OnDeviceLeafClassifier
 import com.geotree.app.core.camera.ContentImageReader
 import com.geotree.app.core.camera.TreeImageStore
 import com.geotree.app.core.database.GeoTreeDatabase
@@ -66,17 +70,29 @@ class AppContainer(context: Context) {
     val headingSource: HeadingSource = DeviceHeadingProvider(appContext)
     val imageStore = TreeImageStore(appContext)
 
-    /** Leaf assessment (DINOv2 on the local AI server). Records and photos stay on the device. */
+    /** Leaf assessment photos. Records and photos stay on the device; only sync sends them. */
     val leafImageStore = TreeImageStore(appContext, "leaf_images")
     val localImageReader: LocalImageReader = ContentImageReader(appContext)
     /** Work that must outlive a screen, e.g. a leaf assessment request after navigating to its result. */
     val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
+    /** The DINOv2 leaf model bundled in assets/leaf_model, installed to filesDir/leaf_model. */
+    val leafModelStore = LeafModelStore(
+        openAsset = { path -> appContext.assets.open(path) },
+        directory = File(appContext.noBackupFilesDir, "leaf_model"),
+    )
+
+    /** Leaf assessment runs on this phone: no network is needed to get a result. */
+    val leafClassifier: LeafClassifier by lazy { OnDeviceLeafClassifier(leafModelStore) }
+
+    /** Fetches newer classifier heads from the server during sync (best effort). */
+    val leafModelUpdater = LeafModelUpdater(leafModelStore, apiProvider::aiApi)
+
     /** Leaf assessment history: every scan is its own Room record, synced like trees. */
     val leafAssessmentRepository: LeafAssessmentRepository by lazy {
         LeafAssessmentRepository(
             dao = database.leafAssessmentDao(),
-            api = apiProvider::aiApi,
+            classifier = leafClassifier,
             scope = applicationScope,
             onFinished = { syncScheduler.requestSync(replace = false) },
         )
@@ -91,6 +107,7 @@ class AppContainer(context: Context) {
         SyncEngine(
             treeRepository, apiProvider::api, sessionStore, syncPreferences, syncStatusTracker,
             leafAssessments = leafAssessmentRepository,
+            modelUpdate = { leafModelUpdater.refresh() },
         )
     }
     val syncScheduler = SyncScheduler(appContext)

@@ -167,7 +167,7 @@ private fun OutcomeCard(record: LeafAssessmentEntity) {
                 AssessmentStatus.PENDING, AssessmentStatus.PROCESSING -> Row(verticalAlignment = Alignment.CenterVertically) {
                     CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
                     Spacer(Modifier.size(12.dp))
-                    Text("Analyzing with DINOv2 on the AI server…", style = MaterialTheme.typography.bodyLarge)
+                    Text("Analyzing with DINOv2 on this phone…", style = MaterialTheme.typography.bodyLarge)
                 }
                 AssessmentStatus.COMPLETED -> {
                     Text(record.className ?: "Unknown", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, modifier = Modifier.testTag("result_condition"))

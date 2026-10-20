@@ -59,7 +59,28 @@ if ($LASTEXITCODE -ne 0) {
 }
 Write-Step 'Docker engine is running'
 
-# 3. Start services. Named volumes (geo_tree_mongodb_data, geo_tree_uploads, geo_tree_ai_data) are reused, never removed.
+# 3. Build the web administration (served by the API at http://localhost:<port>/). Optional:
+#    without Node.js the API still starts, and a previous build in backend\web_dist is reused.
+$webDir = Join-Path $repoRoot 'web'
+if ((Test-Path -LiteralPath $webDir) -and (Get-Command npm -ErrorAction SilentlyContinue)) {
+    Push-Location -LiteralPath $webDir
+    try {
+        if (-not (Test-Path -LiteralPath (Join-Path $webDir 'node_modules'))) {
+            Write-Step 'npm ci (first run)'
+            cmd /c 'npm ci --no-fund --no-audit'
+            if ($LASTEXITCODE -ne 0) { Stop-WithError 'npm ci failed. See the output above.' }
+        }
+        Write-Step 'npm run build (web administration)'
+        cmd /c 'npm run build'
+        if ($LASTEXITCODE -ne 0) { Stop-WithError 'The web administration build failed. See the output above.' }
+    } finally {
+        Pop-Location
+    }
+} elseif (-not (Test-Path -LiteralPath (Join-Path $repoRoot 'backend\web_dist\index.html'))) {
+    Write-Host '  ! Node.js not found: the web administration is not built (the API and Android app still work).' -ForegroundColor Yellow
+}
+
+# 4. Start services. Named volumes (geo_tree_mongodb_data, geo_tree_uploads, geo_tree_ai_data) are reused, never removed.
 #    The first build also installs CPU PyTorch for leaf assessment (a few minutes, once).
 Write-Step 'docker compose up -d --build'
 cmd /c 'docker compose up -d --build'
@@ -67,7 +88,7 @@ if ($LASTEXITCODE -ne 0) {
     Stop-WithError 'docker compose up failed. See the output above.'
 }
 
-# 4. Wait for the health endpoint.
+# 5. Wait for the health endpoint.
 $healthUrl = "http://localhost:$port/api/v1/health"
 Write-Step "Waiting for $healthUrl (up to $TimeoutSeconds s)"
 $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
@@ -113,6 +134,11 @@ if ($health.ai -eq 'enabled') {
 Write-Host ''
 Write-Host 'Local:'
 Write-Host "  http://localhost:$port"
+if (Test-Path -LiteralPath (Join-Path $repoRoot 'backend\web_dist\index.html')) {
+    Write-Host ''
+    Write-Host 'Web administration (Admin / Super Admin accounts):'
+    Write-Host "  http://localhost:$port/"
+}
 Write-Host ''
 Write-Host 'Android emulator:'
 Write-Host "  http://10.0.2.2:$port"

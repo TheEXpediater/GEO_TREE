@@ -99,3 +99,12 @@ def fail_interrupted_jobs(db: Database, now: datetime) -> int:
         {"$set": {"status": "ERROR", "finished_at": now, "error_message": "Interrupted by a server restart. Rebuild the model to retry."}},
     )
     return result.modified_count
+
+
+def list_models(db: Database, limit: int) -> list[dict[str, Any]]:
+    return list(db[AI_MODELS].find({}, _PROJECTION).sort("model_version", DESCENDING).limit(limit))
+
+
+def list_jobs(db: Database, limit: int, status: str | None = None) -> list[dict[str, Any]]:
+    selector = {"status": status} if status else {}
+    return list(db[AI_JOBS].find(selector, _PROJECTION).sort("created_at", DESCENDING).limit(limit))

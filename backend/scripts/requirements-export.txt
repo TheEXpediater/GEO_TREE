@@ -1,0 +1,4 @@
+# Model export for on-device inference (scripts/export_mobile_model.py); not a server runtime dependency.
+# ONNX Runtime matches the Android runtime version (gradle/libs.versions.toml: onnxruntime).
+onnx==1.18.0
+onnxruntime==1.22.0

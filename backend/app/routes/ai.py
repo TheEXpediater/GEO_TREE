@@ -1,4 +1,4 @@
-"""Leaf assessment for signed-in field users, plus training-job lookup for administrators."""
+"""Leaf assessment and the on-device model head for signed-in field users, plus training-job lookup for administrators."""
 
 from __future__ import annotations
 
@@ -35,6 +35,12 @@ async def leaf_assessment(
 @router.get("/status")
 def ai_status(_: dict[str, Any] = Depends(get_current_user), ai: Any = Depends(get_ai_service)) -> dict[str, Any]:
     return ai.public_status()
+
+
+@router.get("/model/head")
+def model_head(_: dict[str, Any] = Depends(get_current_user), ai: Any = Depends(get_ai_service)) -> dict[str, Any]:
+    """The active classifier head in the Android on-device format, so phones can update offline inference."""
+    return ai.mobile_head()
 
 
 @router.get("/jobs/{job_id}")

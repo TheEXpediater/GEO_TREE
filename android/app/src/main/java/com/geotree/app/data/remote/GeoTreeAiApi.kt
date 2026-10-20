@@ -1,7 +1,7 @@
 package com.geotree.app.data.remote
 
 import okhttp3.MultipartBody
-import okhttp3.RequestBody
+import okhttp3.ResponseBody
 import retrofit2.http.Body
 import retrofit2.http.DELETE
 import retrofit2.http.GET
@@ -12,9 +12,10 @@ import retrofit2.http.Part
 import retrofit2.http.Path
 
 /**
- * FastAPI AI routes: classifier administration (admin role) and leaf assessment (any signed-in
- * user). Separate from [GeoTreeApi] because these calls run DINOv2 on the server and need longer
- * timeouts; field sync never depends on them.
+ * FastAPI AI routes: classifier administration (admin role), plus the model status and the
+ * classifier-head download that keep the ON-DEVICE leaf model current (any signed-in user).
+ * Leaf assessment itself runs on the phone (core/ai); no photo is sent here to be classified.
+ * Separate from [GeoTreeApi] because uploads need longer timeouts; field sync never depends on it.
  */
 interface GeoTreeAiApi {
     @GET("api/v1/admin/classifiers")
@@ -51,9 +52,9 @@ interface GeoTreeAiApi {
     @GET("api/v1/ai/status")
     suspend fun aiStatus(): AiStatusDto
 
-    @Multipart
-    @POST("api/v1/ai/leaf-assessment")
-    suspend fun assessLeaf(@Part file: MultipartBody.Part, @Part("treeId") treeId: RequestBody?): LeafAssessmentDto
+    /** The active classifier head in the on-device format (see core/ai/LeafModelSpec.kt). */
+    @GET("api/v1/ai/model/head")
+    suspend fun modelHead(): ResponseBody
 
     companion object {
         fun thumbnailPath(classId: String, imageId: String) = "api/v1/admin/classifiers/$classId/images/$imageId/thumbnail"

@@ -5,7 +5,7 @@ import com.geotree.app.core.database.LeafAssessmentEntity
 import com.geotree.app.core.database.SyncStatus
 import com.geotree.app.core.design.PillTone
 import com.geotree.app.data.repository.LeafAssessmentRepository
-import com.geotree.app.testing.FakeAiServer
+import com.geotree.app.testing.FakeLeafClassifier
 import com.geotree.app.testing.FakeLeafAssessmentDao
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -33,7 +33,7 @@ class AssessmentDetailTest {
     @get:Rule val temp = TemporaryFolder()
 
     private val dispatcher = StandardTestDispatcher()
-    private val server = FakeAiServer()
+    private val classifier = FakeLeafClassifier()
     private val dao = FakeLeafAssessmentDao()
     private var now = 1_790_000_000_000
 
@@ -43,7 +43,7 @@ class AssessmentDetailTest {
     @After
     fun tearDown() = Dispatchers.resetMain()
 
-    private fun TestScope.repository() = LeafAssessmentRepository(dao, { server }, scope = this, clock = { now += 1_000; now })
+    private fun TestScope.repository() = LeafAssessmentRepository(dao, classifier, scope = this, clock = { now += 1_000; now })
 
     private fun TestScope.detail(repo: LeafAssessmentRepository, id: String) =
         AssessmentDetailViewModel(id, repo) { flowOf("GEO-TAM-013") }.also { vm ->
@@ -55,7 +55,7 @@ class AssessmentDetailTest {
 
     @Test
     fun `result page follows the scan from processing to its stored result`() = runTest(dispatcher) {
-        server.assessment = FakeAiServer.result("Spotting", 0.94, version = 2)
+        classifier.prediction = FakeLeafClassifier.result("Spotting", 0.94, version = 2)
         val repo = repository()
         val scan = repo.start("tree-1", photo("a.jpg"))
         val vm = AssessmentDetailViewModel(scan.id, repo) { flowOf("GEO-TAM-013") }
@@ -76,9 +76,9 @@ class AssessmentDetailTest {
     @Test
     fun `opening an older history entry shows its original details`() = runTest(dispatcher) {
         val repo = repository()
-        server.assessment = FakeAiServer.result("Healthy", 0.91)
+        classifier.prediction = FakeLeafClassifier.result("Healthy", 0.91)
         val first = repo.start("tree-1", photo("1.jpg")); advanceUntilIdle()
-        server.assessment = FakeAiServer.result("Mold", 0.83, version = 3)
+        classifier.prediction = FakeLeafClassifier.result("Mold", 0.83, version = 3)
         repo.start("tree-1", photo("2.jpg")); advanceUntilIdle()
 
         val record = (detail(repo, first.id).load.value as AssessmentLoad.Loaded).record
@@ -95,13 +95,13 @@ class AssessmentDetailTest {
     @Test
     fun `assess again from a failed entry opens a new scan and keeps the failed one`() = runTest(dispatcher) {
         val repo = repository()
-        server.unreachable = true
+        classifier.failure = FakeLeafClassifier.inferenceFailure
         val failed = repo.start("tree-1", photo("f.jpg")); advanceUntilIdle()
         val vm = detail(repo, failed.id)
         assertTrue(canReassess((vm.load.value as AssessmentLoad.Loaded).record))
 
-        server.unreachable = false
-        server.assessment = FakeAiServer.result()
+        classifier.failure = null
+        classifier.prediction = FakeLeafClassifier.result()
         vm.reassess()
         advanceUntilIdle()
 

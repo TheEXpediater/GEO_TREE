@@ -8,7 +8,7 @@ from app.auth.dependencies import get_db
 from app.database.mongo import ping
 
 SERVICE_NAME = "geo-tree-api"
-API_VERSION = "0.3.0"
+API_VERSION = "0.4.0"
 
 router = APIRouter(prefix="/api/v1", tags=["health"])
 

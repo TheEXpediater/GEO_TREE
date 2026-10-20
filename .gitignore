@@ -67,6 +67,13 @@ ai_test_results/
 *.onnx
 *.npy
 *.npz
+# On-device leaf model bundled into the APK (trained head + DINOv2 weights). Regenerate with
+# backend/scripts/export_mobile_model.py; the build verifies it against manifest.json.
+android/app/src/main/assets/leaf_model/
 
 # APK release staging (tools/distribution/prepare_release.py)
 tools/distribution/release/
+
+# Web administration (web/): dependencies and the production build the API serves
+web/node_modules/
+backend/web_dist/

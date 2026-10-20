@@ -36,6 +36,11 @@ class Settings:
     dev_admin_password: str = "admin123"
     # Folder with the published APK download page (index.html + GEO_Tree.apk); None disables /download.
     distribution_dir: Path | None = None
+    # Built web administration (npm run build in web/); a missing index.html means API only.
+    web_dist_dir: Path | None = None
+    # Failed sign-ins per email before a temporary lockout (0 disables), and the window.
+    login_max_failures: int = 10
+    login_window_seconds: int = 15 * 60
     ai: AiSettings = field(default_factory=AiSettings)
 
     @property
@@ -88,5 +93,8 @@ def load_settings() -> Settings:
         dev_admin_email=os.environ.get("DEV_ADMIN_EMAIL", "admin@gmail.com"),
         dev_admin_password=os.environ.get("DEV_ADMIN_PASSWORD", "admin123"),
         distribution_dir=Path(os.environ["DISTRIBUTION_DIR"]) if os.environ.get("DISTRIBUTION_DIR", "").strip() else None,
+        web_dist_dir=Path(os.environ.get("WEB_DIST_DIR", "").strip() or str(BACKEND_ROOT / "web_dist")),
+        login_max_failures=int(os.environ.get("LOGIN_MAX_FAILURES", "10")),
+        login_window_seconds=int(os.environ.get("LOGIN_WINDOW_SECONDS", str(15 * 60))),
         ai=load_ai_settings(),
     )

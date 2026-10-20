@@ -2,8 +2,7 @@ package com.geotree.app.feature.leafassessment
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.geotree.app.data.remote.AiStatusDto
-import com.geotree.app.data.repository.AiProblem
+import com.geotree.app.core.ai.LeafModelInfo
 import com.geotree.app.data.repository.AiResult
 import com.geotree.app.data.repository.LeafAssessmentRepository
 import java.io.File
@@ -13,22 +12,19 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-/** Whether leaf assessment can run right now. The rest of the app never depends on this. */
+/**
+ * Whether the ON-DEVICE leaf model can run. It ships in the APK, so this never depends on the
+ * network; NotReady means the installed model files are missing or damaged.
+ */
 sealed interface AiAvailability {
     data object Checking : AiAvailability
     data class Ready(val modelDisplayName: String, val modelVersion: Int?, val classes: List<String>) : AiAvailability
     data class NotReady(val message: String) : AiAvailability
-    data class Unavailable(val message: String) : AiAvailability
 }
 
-fun AiResult<AiStatusDto>.toAvailability(): AiAvailability = when (this) {
-    is AiResult.Ok ->
-        if (value.ready) AiAvailability.Ready(value.modelDisplayName, value.modelVersion, value.classes)
-        else AiAvailability.NotReady("No trained tamarind leaf model yet. An administrator must add images and train the classifier.")
-    is AiResult.Failed -> when (problem) {
-        is AiProblem.ModelNotReady -> AiAvailability.NotReady(problem.message)
-        else -> AiAvailability.Unavailable(problem.message)
-    }
+fun AiResult<LeafModelInfo>.toAvailability(): AiAvailability = when (this) {
+    is AiResult.Ok -> AiAvailability.Ready(value.modelDisplayName, value.modelVersion, value.classes)
+    is AiResult.Failed -> AiAvailability.NotReady(problem.message)
 }
 
 sealed interface LeafStage {
@@ -49,7 +45,7 @@ data class LeafAssessmentUiState(
 
 /**
  * Capture and review only. "Assess" records a new scan in Room (one scan = one history record)
- * and hands its id to the result page; the AI request itself runs in the repository.
+ * and hands its id to the result page; on-device inference itself runs in the repository.
  */
 class LeafAssessmentViewModel(
     private val treeId: String,
@@ -67,7 +63,7 @@ class LeafAssessmentViewModel(
 
     fun refreshAvailability() {
         _state.update { it.copy(availability = AiAvailability.Checking) }
-        viewModelScope.launch { _state.update { it.copy(availability = repository.aiStatus().toAvailability()) } }
+        viewModelScope.launch { _state.update { it.copy(availability = repository.modelStatus().toAvailability()) } }
     }
 
     fun openCamera() = _state.update { it.copy(cameraOpen = true, message = null) }

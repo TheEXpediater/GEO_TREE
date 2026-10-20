@@ -31,6 +31,8 @@ data class DashboardUiState(
     val offlineMap: OfflineMapState = OfflineMapState.Checking,
     val session: SessionState = SessionState.VALID,
     val authRequired: Boolean = false,
+    /** Admin or Super Admin: the Dashboard also shows the Administration shortcut. */
+    val isAdmin: Boolean = false,
 ) {
     /** PENDING and FAILED records are both retried by the next sync. */
     val waitingToSync: Int get() = counts.pending + counts.failed

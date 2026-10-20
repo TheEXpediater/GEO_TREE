@@ -164,20 +164,3 @@ data class AiStatusDto(
     val confidenceThreshold: Double = 0.0,
     val trainedAt: String? = null,
 )
-
-@Serializable
-data class ClassProbabilityDto(val classId: String, val className: String, val probability: Double)
-
-@Serializable
-data class LeafAssessmentDto(
-    val classId: String,
-    val className: String,
-    val confidence: Double,
-    val uncertain: Boolean = false,
-    val confidenceThreshold: Double = 0.0,
-    val model: String,
-    val modelDisplayName: String = model,
-    val modelVersion: Int,
-    val probabilities: List<ClassProbabilityDto> = emptyList(),
-    val assessedAt: String? = null,
-)

@@ -79,15 +79,7 @@ fun LeafStatusCard(
                     Text(modelText(latest), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            when (availability) {
-                is AiAvailability.NotReady -> Text(availability.message, style = MaterialTheme.typography.bodySmall)
-                is AiAvailability.Unavailable -> Text(
-                    "New scans need the local AI backend. History, tree records, the map and navigation keep working offline.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                else -> Unit
-            }
+            if (availability is AiAvailability.NotReady) Text(availability.message, style = MaterialTheme.typography.bodySmall)
             FilledTonalButton(onClick = onAssess, modifier = Modifier.fillMaxWidth().testTag("assess_leaf")) {
                 Icon(painterResource(R.drawable.ic_leaf), contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.size(8.dp))

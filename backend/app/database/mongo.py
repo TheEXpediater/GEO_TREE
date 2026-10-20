@@ -13,6 +13,8 @@ CLASSIFIER_CLASSES = "classifier_classes"
 CLASSIFIER_IMAGES = "classifier_images"
 AI_MODELS = "ai_models"
 AI_JOBS = "ai_jobs"
+TAGS = "tags"
+AUDIT_LOG = "audit_log"
 
 
 def create_client(uri: str) -> MongoClient:
@@ -29,6 +31,12 @@ def ensure_indexes(db: Database) -> None:
     db[LEAF_ASSESSMENTS].create_index([("assessment_id", ASCENDING)], unique=True, name="uniq_assessment_id")
     db[LEAF_ASSESSMENTS].create_index([("tree_id", ASCENDING), ("created_at", DESCENDING)], name="tree_history")
     db[LEAF_ASSESSMENTS].create_index([("server_version", ASCENDING)], name="assessment_server_version")
+    # Web administration: general tags (not the DINOv2 condition labels) and the activity log.
+    db[TAGS].create_index([("id", ASCENDING)], unique=True, name="uniq_tag_id")
+    db[TAGS].create_index([("slug", ASCENDING)], unique=True, name="uniq_tag_slug")
+    db[TREES].create_index([("tag_ids", ASCENDING)], name="tree_tags")
+    db[AUDIT_LOG].create_index([("at", DESCENDING)], name="audit_at")
+    db[AUDIT_LOG].create_index([("action", ASCENDING), ("at", DESCENDING)], name="audit_action")
 
 
 def ensure_ai_indexes(db: Database) -> None:

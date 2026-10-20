@@ -10,8 +10,24 @@ from pymongo.database import Database
 from app.config import Settings, load_settings
 from app.database.mongo import create_client, ensure_indexes
 from app.errors import install_error_handlers
-from app.routes import admin_classifiers, ai, auth, download, health, leaf_assessments, trees, uploads
+from app.auth.rate_limit import LoginRateLimiter
+from app.routes import (
+    admin_assessments,
+    admin_classifiers,
+    admin_map,
+    admin_overview,
+    admin_trees,
+    admin_users,
+    ai,
+    auth,
+    download,
+    health,
+    leaf_assessments,
+    trees,
+    uploads,
+)
 from app.services.seed import seed_dev_admin
+from app.web import install_web
 
 logger = logging.getLogger("geo_tree")
 
@@ -56,7 +72,8 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
         if client is not None:
             client.close()
 
-    app = FastAPI(title="GEO Tree API", version="0.2.0", lifespan=lifespan)
+    app = FastAPI(title="GEO Tree API", version="0.4.0", lifespan=lifespan)
+    app.state.login_limiter = LoginRateLimiter(settings.login_max_failures, settings.login_window_seconds)
     install_error_handlers(app)
     app.include_router(health.router)
     app.include_router(auth.router)
@@ -66,4 +83,11 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
     app.include_router(download.router)
     app.include_router(admin_classifiers.router)
     app.include_router(ai.router)
+    app.include_router(admin_overview.router)
+    app.include_router(admin_users.router)
+    app.include_router(admin_trees.router)
+    app.include_router(admin_assessments.router)
+    app.include_router(admin_map.router)
+    # Last: the web administration's catch-all never shadows an API route.
+    install_web(app, settings.web_dist_dir)
     return app

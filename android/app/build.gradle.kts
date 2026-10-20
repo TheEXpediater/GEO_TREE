@@ -1,3 +1,6 @@
+import java.security.MessageDigest
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -30,6 +33,17 @@ val prefillEmail = (findProperty("geotree.prefillEmail") as String?) ?: "admin@g
 val prefillPassword = (findProperty("geotree.prefillPassword") as String?)
     ?: if (isLocalServer(defaultBaseUrl)) "admin123" else ""
 
+// Distribution signing. The keystore and its passwords live OUTSIDE the repository in a properties
+// file (storeFile, storePassword, keyAlias, keyPassword) passed as
+// -Pgeotree.signingProperties=<path>; without it a release build is left unsigned. GEO Tree keeps the
+// certificate that signed earlier releases (SHA-256 071b9904…) so installed apps upgrade in place;
+// a different key would force every tester to uninstall. See README "Hosted deployment".
+val signingProperties = (findProperty("geotree.signingProperties") as String?)?.let { path ->
+    val file = File(path)
+    if (!file.isFile) throw GradleException("geotree.signingProperties: $path not found")
+    Properties().apply { file.inputStream().use(::load) }
+}
+
 android {
     namespace = "com.geotree.app"
     compileSdk = 35
@@ -38,9 +52,21 @@ android {
         applicationId = "com.geotree.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 8
-        versionName = "0.5.0-hostinger"
+        versionCode = 10
+        versionName = "0.7.0"
         buildConfigField("String", "DEFAULT_BASE_URL", "\"$defaultBaseUrl\"")
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    signingProperties?.let { props ->
+        signingConfigs {
+            create("distribution") {
+                storeFile = File(props.getProperty("storeFile"))
+                storePassword = props.getProperty("storePassword")
+                keyAlias = props.getProperty("keyAlias")
+                keyPassword = props.getProperty("keyPassword")
+            }
+        }
     }
 
     buildTypes {
@@ -51,6 +77,8 @@ android {
         }
         release {
             isMinifyEnabled = false
+            isDebuggable = false
+            signingConfigs.findByName("distribution")?.let { signingConfig = it }
             buildConfigField("String", "DEV_EMAIL", "\"\"")
             buildConfigField("String", "DEV_PASSWORD", "\"\"")
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
@@ -76,6 +104,43 @@ android {
 ksp {
     arg("room.schemaLocation", "$projectDir/schemas")
 }
+
+// The on-device leaf model (assets/leaf_model, gitignored: trained weights) must be present and
+// intact in every APK, or the first offline assessment would fail. Generate it with
+// backend/scripts/export_mobile_model.py (README "On-device leaf assessment").
+val verifyLeafModel by tasks.registering {
+    val modelDir = layout.projectDirectory.dir("src/main/assets/leaf_model").asFile
+    inputs.dir(modelDir).optional()
+    doLast {
+        val manifestFile = modelDir.resolve("manifest.json")
+        if (!manifestFile.isFile) {
+            throw GradleException("On-device leaf model missing: ${modelDir.path}. Run backend/scripts/export_mobile_model.py (README).")
+        }
+        @Suppress("UNCHECKED_CAST")
+        val manifest = groovy.json.JsonSlurper().parse(manifestFile) as Map<String, Any?>
+        fun sha256(file: File): String {
+            val digest = MessageDigest.getInstance("SHA-256")
+            file.inputStream().use { input ->
+                val buffer = ByteArray(1 shl 16)
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    digest.update(buffer, 0, read)
+                }
+            }
+            return digest.digest().joinToString("") { "%02x".format(it) }
+        }
+        for (key in listOf("backbone", "head")) {
+            @Suppress("UNCHECKED_CAST")
+            val entry = manifest[key] as Map<String, Any?>
+            val file = modelDir.resolve(entry["file"] as String)
+            if (!file.isFile || sha256(file) != entry["sha256"]) {
+                throw GradleException("On-device leaf model file ${file.name} is missing or does not match manifest.json.")
+            }
+        }
+    }
+}
+tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }.configureEach { dependsOn(verifyLeafModel) }
 
 dependencies {
     implementation(libs.androidx.core.ktx)
@@ -111,8 +176,12 @@ dependencies {
     implementation(libs.kotlinx.coroutines.play.services)
     implementation(libs.coil.compose)
     implementation(libs.maplibre.android)
+    implementation(libs.onnxruntime.android)
+    implementation(libs.androidx.exifinterface)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.sqlite.jdbc)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.ext.junit)
 }

@@ -148,9 +148,9 @@ private fun AvailabilityBanner(availability: AiAvailability, onRefresh: () -> Un
         Spacer(Modifier.size(8.dp))
         Text(
             when (availability) {
-                is AiAvailability.Ready -> availability.modelDisplayName + (availability.modelVersion?.let { " · v$it" } ?: "")
+                is AiAvailability.Ready -> availability.modelDisplayName + (availability.modelVersion?.let { " · v$it" } ?: "") + " · on this phone"
                 AiAvailability.Checking -> ""
-                else -> "Local AI backend"
+                else -> "On-device model"
             },
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -160,10 +160,6 @@ private fun AvailabilityBanner(availability: AiAvailability, onRefresh: () -> Un
     }
     when (availability) {
         is AiAvailability.NotReady -> Notice(availability.message, GeoColors.ClayLight)
-        is AiAvailability.Unavailable -> Notice(
-            "${availability.message} You can still take the photo now: it is saved on this device and can be assessed later.",
-            GeoColors.GpsAmberLight,
-        )
         else -> Unit
     }
 }

@@ -13,10 +13,10 @@ import kotlinx.coroutines.flow.Flow
 /**
  * The AI outcome of one scan. Separate from [syncStatus] (network state):
  *  PENDING     photo saved, request not started
- *  PROCESSING  sent to the AI server, waiting for the result
+ *  PROCESSING  on-device inference running (an older APK: sent to the AI server)
  *  COMPLETED   classified at or above the confidence threshold
  *  UNCERTAIN   classified, but below the confidence threshold
- *  FAILED      no result (server unreachable, model not ready, interrupted…); photo kept
+ *  FAILED      no result (model unavailable, unreadable photo, interrupted…); photo kept
  */
 enum class AssessmentStatus {
     PENDING, PROCESSING, COMPLETED, UNCERTAIN, FAILED;
@@ -35,7 +35,7 @@ enum class AssessmentStatus {
  * Assessment photos are never training data.
  *
  * [modelName]/[modelVersion] are null when the scan never reached the model (e.g. a FAILED
- * attempt while the AI server was offline): no model version is ever invented.
+ * attempt whose photo could not be read): no model version is ever invented.
  */
 @Entity(
     tableName = "leaf_assessments",

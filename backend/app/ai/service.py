@@ -17,6 +17,7 @@ This is not a durable production queue.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 import threading
@@ -36,10 +37,12 @@ from app.ai.features import BackboneUnavailable, FeatureExtractor
 from app.ai.head import C_GRID, MAX_ITERATIONS, LinearHead, fit_head
 from app.ai.images import ValidatedImage, make_thumbnail, validate_image
 from app.ai.metrics import classification_metrics
+from app.ai.mobile import head_document
 from app.ai.resources import MemoryGuard
 from app.ai.storage import AiStorage
 from app.database.mongo import ensure_ai_indexes
 from app.errors import ApiError
+from app.services import audit
 from app.repositories import ai_repository, classifier_repository
 
 logger = logging.getLogger(__name__)
@@ -491,8 +494,13 @@ class AiService:
             else:
                 logger.warning("Training job %s failed: %s", job["id"], message)
             ai_repository.update_job(self.db, job["id"], {"status": "ERROR", "finished_at": self._clock(), "error_message": message[:500]})
+            audit.record(self.db, None, "model.training_failed", "Classifier training failed; the previous model stays active",
+                         "ai_job", job["id"], {"error": message[:300]})
             return
         ai_repository.update_job(self.db, job["id"], {"status": "COMPLETE", "finished_at": self._clock(), **summary})
+        audit.record(self.db, None, "model.activated", f"Model v{summary['model_version']} trained and activated", "ai_model",
+                     str(summary["model_version"]), {"validationAccuracy": summary["validation_accuracy"],
+                                                     "validationMacroF1": summary["validation_macro_f1"]})
         logger.info("Training job %s complete: model v%s", job["id"], summary["model_version"])
 
     def _ensure_embeddings(self, images: list[dict[str, Any]]) -> tuple[int, int]:
@@ -645,6 +653,12 @@ class AiService:
             "assessedAt": self._clock(),
         }
 
+    def mobile_head(self) -> dict[str, Any]:
+        """The active classifier head for on-device inference. Read-only; computes no features."""
+        model, head = self._active_head()
+        path = self.storage.resolve(model["artifact_path"])
+        return head_document(model, head, self._current_names(model), artifact_sha256=hashlib.sha256(path.read_bytes()).hexdigest())
+
     def _current_names(self, model: dict[str, Any]) -> dict[str, str]:
         current = {c["id"]: c["name"] for c in classifier_repository.list_classes(self.db)}
         return {entry["class_id"]: current.get(entry["class_id"], entry["name"]) for entry in model["class_mapping"]}
@@ -753,6 +767,19 @@ class AiService:
                 },
             },
         }
+
+    def list_models(self, limit: int = 20) -> dict[str, Any]:
+        """Model version history, newest first. Old versions stay listed after a newer one activates."""
+        items = []
+        for model in ai_repository.list_models(self.db, limit):
+            view = self._model_view(model)
+            view.update(active=bool(model.get("active")), status=model.get("status"),
+                        invalidatedReason=model.get("invalidated_reason"))
+            items.append(view)
+        return {"items": items}
+
+    def list_jobs(self, limit: int = 20) -> dict[str, Any]:
+        return {"items": [self._job_view(job) for job in ai_repository.list_jobs(self.db, limit)]}
 
     def job(self, job_id: str) -> dict[str, Any]:
         job = ai_repository.find_job(self.db, job_id)

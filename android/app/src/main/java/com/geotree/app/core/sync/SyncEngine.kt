@@ -12,6 +12,7 @@ import com.geotree.app.data.repository.LeafAssessmentRepository
 import com.geotree.app.data.repository.TreeRepository
 import java.io.File
 import java.io.IOException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -81,6 +82,11 @@ class SyncEngine(
     private val clock: () -> Long = System::currentTimeMillis,
     /** Leaf assessment history; null where it is not wired (keeps tree-only tests simple). */
     private val leafAssessments: LeafAssessmentRepository? = null,
+    /**
+     * Brings the on-device classifier up to date after a completed sync. Best effort: its
+     * failure never fails the sync, and assessments never wait for it.
+     */
+    private val modelUpdate: (suspend () -> Unit)? = null,
 ) {
     private val mutex = Mutex()
 
@@ -89,11 +95,24 @@ class SyncEngine(
         var outcome: SyncOutcome = SyncOutcome.Interrupted("Sync cancelled", 0)
         try {
             outcome = runSync()
-            if (outcome is SyncOutcome.Completed) preferences.setLastSuccessfulSyncAt(clock())
+            if (outcome is SyncOutcome.Completed) {
+                preferences.setLastSuccessfulSyncAt(clock())
+                refreshModel()
+            }
         } finally {
             tracker.finished(outcome)
         }
         outcome
+    }
+
+    private suspend fun refreshModel() {
+        try {
+            modelUpdate?.invoke()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // The current on-device model stays active.
+        }
     }
 
     private suspend fun runSync(): SyncOutcome {

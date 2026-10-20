@@ -2,7 +2,35 @@
 
 Android field-management app for registering, geotagging, locating and navigating to tamarind trees, with DINOv2-based tamarind leaf condition assessment. It works offline first and syncs to a shared FastAPI/MongoDB backend.
 
-## AI milestone scope (current, 0.4.0)
+## On-device leaf assessment (current, 0.7.0)
+
+Field testers can assess a tamarind leaf **with no internet connection**. Since 0.7.0 the phone runs the same model the server trained, and the server is not involved in producing a result:
+
+```text
+photo → decode + EXIF orientation → Pillow-exact resize 384 / center-crop 336 / ImageNet normalization
+      → DINOv2 ViT-S/14 (ONNX Runtime on the phone) → 384-d feature → trained classifier head
+      → class + confidence + model version → Room (leaf_assessments) → later WorkManager sync
+```
+
+- **The APK contains the complete model** in `assets/leaf_model/`: the frozen DINOv2 backbone exported to ONNX (87 MB), the trained head (`classifier_head.json`: class order, weights, model version) and `manifest.json` (preprocessing, compatibility key, SHA-256 checksums). The first assessment after a fresh install needs no download. The files are generated, not hand-written, and are gitignored (trained weights); the build refuses to package an APK without them (`verifyLeafModel`). See section 11, "On-device model".
+- **Sign-in is still required once.** The existing authentication rules are unchanged: the first launch needs a connection to sign in. After that, leaf assessment, history, tree records, the map and navigation work offline; a session that expires offline pauses sync only.
+- **Sync is unchanged.** On-device results are synced with the existing idempotent `POST /api/v1/leaf-assessments/sync` (same fields; the server stores them as recorded).
+- **Model updates.** After a completed sync the phone compares the server's active model (`GET /api/v1/ai/status`) with its own and, if different, downloads only the head (`GET /api/v1/ai/model/head`, new in 0.7.0). A head is activated only if it is intact and was trained for the bundled backbone; otherwise the current head stays. Until the backend with that endpoint is deployed, phones keep the bundled model.
+
+## Web administration milestone (0.6.0)
+
+```text
+Web Admin (React + TypeScript, served by geo-tree-api at /) ─┐
+                                                             ├─ FastAPI /api/v1 ── MongoDB
+Android field app (Kotlin/Compose, Room offline-first) ──────┘        └─ DINOv2 ViT-S/14 (in geo-tree-api)
+```
+
+- **Two clients, one backend.** The web administration lives in `web/` and is built into `backend/web_dist`; the API serves it from the same origin (no extra container, no CORS, strict CSP, self-hosted fonts). Android keeps every field workflow **and** its admin screens (Leaf Classifiers, training images, model status, Train / Rebuild); admins now also see an Administration card on the Dashboard.
+- **Roles enforced by FastAPI:** `SUPER_ADMIN`, `ADMIN`, `FIELD_TESTER` (section 13). Accounts can be suspended; a password change or reset revokes older tokens.
+- **Web modules:** dashboard (real data only), tree records (search/filter/sort/paginate, metadata edit, tags, registration photo replace/delete, archive/restore), leaf assessments (read-only review), images (registration / training / assessment evidence kept separate), tags, classifiers and training images, models & training (metrics, confusion matrix, version history, jobs), users, activity log.
+- **Archive is a soft delete.** Phones hide archived trees after their next sync (Room v4); scans and photos are kept; restore brings the tree back.
+
+## AI milestone scope (0.4.0)
 
 ```text
 Tree Detail → Assess Leaf → photo (camera or picker) → local FastAPI → DINOv2 ViT-S/14 (frozen)
@@ -280,7 +308,10 @@ Then turn networking back on with the laptop backend running (`run.bat`). The tr
 ```powershell
 cd backend; .\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt; .\.venv\Scripts\python.exe -m pytest -q; cd ..
 .\gradlew.bat :android:app:testDebugUnitTest
+cd web; npm ci; npm run typecheck; npm test; cd ..
 ```
+
+- **Web administration milestone (0.6.0).** Backend (134 tests in total): every admin route returns 403 for Field Testers and legacy role-less users and 401 without a token; suspension (login 403, existing token 401); tokens revoked by a password change, including tokens issued before `iat` existed; per-email sign-in throttling; audit entries without secrets; Admin limited to Field Tester accounts; Super Admin role changes; no self-demotion/suspension; password reset revoking sessions; user filters without hashes; the Super Admin promotion script (identity and hash unchanged, refuses a second); tree list search/filter/sort/paging; metadata edits that never touch GPS and appear in the phone change feed; Tree Code conflicts; archive/restore (history kept, `updated_at` kept, phone sync keeps it archived); registration photo replace/delete; tag CRUD, web-only assignment, detach on delete; assessment review filters without changing history; dashboard figures; model version history and jobs; web serving without shadowing the API. Android (232): `SUPER_ADMIN` sees admin tools, the Dashboard admin card is role-aware, archived trees are hidden from counts/lists and restored trees reappear, and the Room 3→4 migration checked against the exported v4 schema. Web (7): API client error parsing, session expiry, query building, formatting.
 
 - **AI milestone additions.** Backend (100 tests in total): admin authorization (401/403), class CRUD and name conflicts, upload validation (non-image, too small, oversize, HEIC → JPEG), exact-duplicate rejection, thumbnails without exposed paths, the embedding cache (each new image embedded once; training reuses cached features; a backbone/preprocessing change recomputes them), image delete removing its cached feature and queuing a rebuild, the coalesced debounced job queue, manual retrain, version activation, failed-training rollback (previous model stays active), backbone failure, interrupted-job recovery, class deletion invalidating the model, a new class appearing in the mapping, the prediction contract, `AI_MODEL_NOT_READY`, the head on synthetic features, the stratified duplicate-safe split, metrics against hand-computed values, and the batch-test/import scripts (read-only evaluation, report verification, safe cleanup, refusal of hosted servers). DINOv2 is never downloaded in tests: a fake extractor stands in. Leaf assessment history (14 backend tests): one and two scans per tree, unique ids, the first scan unchanged after the second, newest-first history, detail by id, idempotent re-sync, 409 instead of overwriting a recorded result, FAILED/UNCERTAIN kept, required result fields, invalid ids/values, photo stored once under `leaf_assessments/` and never in the training dataset, the change feed, auth. Android (228 tests in total): admin role visibility and refresh, classifier list/add/rename/delete and name checks, upload progress and partial failure, single and multi-image delete, model-status polling (only while the screen is visible), leaf assessment history (a scan is saved as PROCESSING before the AI request; a second scan creates a second record and leaves the first byte-for-byte unchanged; newest-first ordering; the current status derived from the newest result, not from a failed attempt; "assess again" creates a new record; interrupted scans become FAILED; sync updates touch only sync fields), the result/detail page states, sync through the real `SyncEngine` (several scans per tree, photos uploaded once, repeated sync without duplicates, network failure keeping history, a scan waiting for its tree, a rejected photo format, other devices' scans merged without touching local ones), the Room 2→3 migration executed on a real SQLite (test-only `sqlite-jdbc`) and compared with the exported v3 schema, and the local default server.
 
@@ -548,9 +579,9 @@ Collections: `classifier_classes` (id, name, slug, active, timestamps), `classif
 
 - **Settings → Administration → Leaf Classifiers** (visible only to the ADMIN role): model status card (Untrained / Queued / Training / Ready / Error, active version, dataset images, last trained, validation accuracy, macro F1 and per-class precision/recall/F1), **Train / Rebuild Model**, readiness problems, and one card per class (name, image count, status). Each card has a single ⋮ menu: **Rename Classifier**, **Manage Images**, **Delete Classifier** (with confirmation). The screen polls the server only while it is visible and something is running.
 - **Manage Images**: thumbnail grid with file name and upload time, **Add Images** (system photo picker, up to 50 at once, uploaded one by one with progress and per-file errors such as duplicates), tap to preview or delete one image, long-press to select several and delete them (with confirmation).
-- **Tree Detail → Current Leaf Status**: AI status (ready / model not ready / AI server offline), the newest scan that produced a class (condition, confidence, "Latest scan · date", model and version), **Assess Leaf**, and the number of assessments. This card is derived from history; nothing is stored on the tree.
+- **Tree Detail → Current Leaf Status**: AI status of the on-device model (ready / model not ready, e.g. damaged install), the newest scan that produced a class (condition, confidence, "Latest scan · date", model and version), **Assess Leaf**, and the number of assessments. This card is derived from history; nothing is stored on the tree.
 - **Tree Detail → Assessment History**: every scan of this tree, newest first (condition and confidence or "Not assessed", date, AI status, sync status). Tapping a row opens its read-only detail. Empty state: "No assessments yet. Run a leaf scan to begin monitoring this tree's condition over time."
-- **Assess Leaf → Run Assessment → result page**: Take Photo (CameraX) or Choose Photo → review → **Run Assessment**. The scan is written to Room (status PROCESSING, its own assessment UUID) *before* the AI request, then the result page for that scan opens and follows it to Completed / Uncertain ("Confidence below threshold") / Failed ("Assessment unavailable" with the reason). It shows the photo, class, confidence, model and version, scan and completion times, AI status and sync status, with **Back to Tree** and **View History**. The capture screen is replaced, so Back returns to the tree. The AI request runs in an application-lifetime scope, so leaving the page does not cancel it.
+- **Assess Leaf → Run Assessment → result page**: Take Photo (CameraX) or Choose Photo → review → **Run Assessment**. The scan is written to Room (status PROCESSING, its own assessment UUID) *before* on-device inference starts, then the result page for that scan opens and follows it to Completed / Uncertain ("Confidence below threshold") / Failed ("Assessment unavailable" with the reason, e.g. an unreadable photo). It shows the photo, class, confidence, model and version, scan and completion times, AI status and sync status, with **Back to Tree** and **View History**. The capture screen is replaced, so Back returns to the tree. Inference runs in an application-lifetime scope, so leaving the page does not cancel it.
 - **Retry / assess again** is offered on a finished scan whose photo is still on the phone. It creates a **new** scan from the same photo; the earlier record (including a failed offline attempt) stays in history unchanged.
 
 ### Leaf assessment history
@@ -561,7 +592,7 @@ Collections: `classifier_classes` (id, name, slug, active, timestamps), `classif
 - **Sync** runs inside the existing WorkManager `SyncEngine`, after trees (an assessment needs its tree on the server): push finished scans by assessment UUID (`POST /api/v1/leaf-assessments/sync`, then the photo once with `POST /api/v1/leaf-assessments/{id}/image`), then pull other devices' scans from `GET /api/v1/leaf-assessments/changes?after_version=<n>` with their own server-side cursor. Re-sending a recorded scan is a no-op ("unchanged"); a different result for the same id is rejected with 409 `ASSESSMENT_CONFLICT` and nothing is overwritten. A pull adds unknown scans and never changes a local scan's result or deletes anything. A finished scan requests a sync automatically.
 - **MongoDB** collection `leaf_assessments`: one document per scan (`assessment_id`, `tree_id`, `status`, `class_id`, `class_name`, `confidence`, `model_name`, `model_display_name`, `model_version`, `error_code`, `error_message`, `image_path`, `created_at`, `completed_at`, `updated_at`, `server_version`, `created_by`). Indexes: unique `assessment_id`, `(tree_id, created_at)`, `server_version`. `tree_id` is not unique.
 - **Assessment photos are not training data.** They are stored as `uploads/leaf_assessments/<assessment-id>.<ext>` (the `geo_tree_uploads` volume), never in `ai_data/classifier_images/`. Only Admin → Classifiers → Manage Images adds training images.
-- These are data routes: they work on any backend (including one with `AI_ENABLED=false`); only new scans need the AI runtime.
+- These are data routes: they work on any backend (including one with `AI_ENABLED=false`). Since 0.7.0 new scans are classified on the phone, so they need no AI runtime on the server either.
 
 ### Loading a labeled training folder and testing
 
@@ -601,6 +632,50 @@ Read these numbers with care:
 **Assessment history, verified on the Medium Phone emulator against local Docker (2026-10-08):** the installed 0.1.0 build (Room v1, 5 trees) was upgraded in place and Room migrated 1→2→3 with all trees kept. On GEO-TAM-012 (Map → tree → View Details): empty state shown; scan 1 → result page "Healthy, 90 %, DINOv2 ViT-S/14 · v2", Back to Tree → exactly 1 history item; scan 2 → 2 items, newest first, the first unchanged (same id and times). Two scans accidentally used a GEO Tree logo picture from the gallery instead of a leaf; the model returned Uncertain (Healthy 49 %) rather than a confident class. Scan 4 (spotting leaf) → "Spotting 98 %" as the current status, 4 items. With the backend stopped and the app force-stopped and relaunched, all history and the oldest scan's photo and details were shown from Room; a new scan failed clearly ("Assessment unavailable", photo kept, no model version). After restarting the backend, "Retry with this photo" created a new scan (Mold 61 %) and kept the failed one: 6 records, 6 unique ids in Room and MongoDB, every photo uploaded; two further syncs left 6 records. The classifier dataset stayed at 103 images.
 
 Earlier in this milestone, Android was exercised on the Medium Phone emulator against this backend: classifier list and model status, add/rename/delete class, multi-image upload, single and multi-select delete, automatic rebuild to model v2, and leaf assessment of a held-out photo ("Spotting, 98 %, DINOv2 ViT-S/14 · v2"). With the backend stopped, Tree Detail showed "AI server offline" with the last result from Room, an assessment attempt failed clearly with the photo kept, a new tree was tagged and saved as Pending, and after restarting the backend the saved photo was assessed again and the tree synced.
+
+### On-device model (Android 0.7.0+)
+
+The phone runs the server's model; nothing is retrained or approximated.
+
+| File (`android/app/src/main/assets/leaf_model/`, gitignored) | Content |
+|---|---|
+| `dinov2_vits14_336.onnx` | the frozen DINOv2 ViT-S/14 module the server loads from its torch.hub cache, exported to ONNX (opset 17) for a fixed 336 × 336 input; the interpolated position embedding is computed by PyTorch and stored as a constant |
+| `classifier_head.json` | the trained head copied from the server artifact `models/model_v<N>.npz` (class order, weights, bias, mean, scale), the model version recorded on assessments and the artifact's SHA-256 |
+| `manifest.json` | preprocessing (resize 384 Pillow bicubic, center crop 336, ImageNet mean/std), the compatibility key `dinov2_vits14\|336px\|resize384-bicubic-centercrop\|imagenet-norm\|cls\|v1`, the confidence threshold (0.6), file checksums and the export's own parity check |
+
+Generate (needs the local AI backend image and its `geo_tree_ai_data` volume, mounted read-only; PowerShell):
+
+```powershell
+docker run --rm -e AI_DATA_DIR=/app/ai_data -e PYTHONPATH=/src -e HOME=/tmp/home `
+  -v geo_tree_ai_data:/app/ai_data:ro -v "${PWD}\backend:/src:ro" -v "${PWD}\android\app\src\main\assets\leaf_model:/out" `
+  geo_tree-backend:latest sh -c "pip install --user -q -r /src/scripts/requirements-export.txt && python /src/scripts/export_mobile_model.py --model-json /app/ai_data/models/model_v2.json --model-version 1 --out /out"
+```
+
+`--model-version` (default: the JSON's) is the version recorded on assessments, so bundle **the active artifact of the server the APK talks to**. The 0.7.0 APK bundles hosted model **v2** (active since 2026-10-11): `--model-json` and `--artifact` point to read-only copies of the production `models/model_v2.json` and `model_v2.npz` (SHA-256 `bfe5dca45a951544178a7c30346491f2820238f233e6105a94379b421fcd9f34`, recorded as `serverArtifactSha256` in the bundled head), with the backbone and verification images from the local volume (DINOv2 weights SHA-256 `b938bf1b…`, identical on both servers). The local Docker v2 artifact (`8c8e813d…`) trained from the same images differs from it only by about 1e-16 (floating-point rounding). The export refuses to write anything unless ONNX Runtime reproduces the PyTorch features on every dataset image (cosine ≥ 0.9999) with identical predicted classes, and running it twice produces byte-identical files.
+
+On the phone (`core/ai`): `OnDeviceLeafClassifier` decodes the photo with `BitmapFactory` (stored pixel values, no colour-space conversion, like Pillow), applies the EXIF orientation like Pillow's `exif_transpose`, resizes with a bit-exact port of Pillow's bicubic resampler (`PillowResample`), normalizes in float32 like NumPy, runs the ONNX backbone with ONNX Runtime 1.22.0 and applies the head in float64. `LeafModelStore` copies the backbone once to `noBackupFilesDir/leaf_model` and verifies its SHA-256 (a damaged copy is replaced from the APK; a damaged APK asset is an explicit "Model not ready" error, never a guess). Downloaded heads are validated, written atomically and activated by a pointer swap; the previous head is kept as the last known good one, and the bundled head is the final fallback.
+
+Checks:
+- JVM unit tests (`core/ai`): preprocessing tensors equal the server's `preprocess` bit for bit on 19 generated cases including all 8 EXIF orientations (fixtures from `backend/scripts/make_android_ai_fixtures.py`, no user photos); head probabilities equal `LinearHead.predict_proba` within 1e-12; corrupt/incompatible model files are refused; a failed update keeps the active head.
+- Device parity harness: `backend/scripts/mobile_parity_reference.py reference` runs photos through the server's upload validation, feature extractor and head; `android/app/src/androidTest/.../LeafModelParityTest` runs the phone pipeline on the same files (instructions in its header); `mobile_parity_reference.py compare` reports class agreement, identical-pixel and identical-tensor counts, feature cosine, probability differences and timings.
+
+### On-device measurements (emulator, 2026-10-12)
+
+`Medium_Phone` AVD (`sdk_gphone16k_x86_64`, Android 17, 16 KB pages), APK 0.7.0. First measured with the local head (`8c8e813d…`, labelled v1), then repeated with the final build bundling hosted v2 (`bfe5dca4…`, compared with server features scored by that exact artifact): same results. Inputs: all 137 photos of the labeled dataset after the server's own upload validation (HEIC converted to JPEG as the server stores them).
+
+| Check | Result |
+|---|---|
+| Export: ONNX Runtime vs PyTorch on the 103 training images | min cosine 0.99999976, max probability difference 3.2e-6, 103/103 same class |
+| Phone vs server: predicted class | **137/137** |
+| Phone vs server: decoded pixels / input tensors | 137/137 identical / 137/137 bit-identical |
+| Phone vs server: features | min cosine 0.999999999996; max probability difference 3.2e-6 |
+| Held-out photos (34, never trained on) | phone 31/34 = server 31/34 against folder labels; includes both copies of the conflicting `IMG_7259` and photos with near-duplicates in training, so not a field-accuracy estimate |
+| Time per photo (12 MP; median) | decode 320 ms, preprocess 314 ms, inference 244 ms; whole `classify()` 818 ms |
+| ONNX session creation | 0.36–10 s (first use after app start) |
+| Memory while loaded | native heap about 250–270 MB, Java heap about 115 MB |
+| APK | 220 MB (debug, 4 ABIs) |
+
+Field flow on the emulator (airplane mode, server unreachable): 3 scans of one tree → 3 COMPLETED records with distinct ids, results equal to the server's for the same photos; kept after force-stop and offline restart; synced automatically about 5 s after reconnecting (photos uploaded once); repeated syncs added no duplicates. A corrupted installed model file was detected and re-installed from the APK at the next start.
 
 ### AI on GPU (optional, not configured)
 
@@ -658,8 +733,11 @@ docker network connect geo-tree-network museum-guide-caddy-prod
 **Update GEO Tree** (from the repository root on the laptop):
 
 ```powershell
-# 1. package the backend + deploy files (git-tracked and new, never .env/ai_data/uploads)
+# 1. build the web administration, then package the backend + deploy files + the web build
+#    (git-tracked and new files, never .env/ai_data/uploads; backend/web_dist is gitignored, so add it explicitly)
+cd web; npm ci; npm run build; cd ..
 git ls-files -co --exclude-standard backend deploy | Select-String -NotMatch '^backend/tests/' | % { $_.Line } > $env:TEMP\files.txt
+git ls-files -o backend/web_dist >> $env:TEMP\files.txt
 tar --force-local -czf $env:TEMP\geotree-source.tgz -T $env:TEMP\files.txt
 scp -i ~/.ssh/id_ed25519_hostinger_vps $env:TEMP\geotree-source.tgz root@<vps>:/opt/geotree/source/
 # 2. on the server
@@ -670,13 +748,24 @@ cd /opt/geotree && docker compose -p geo_tree_prod up -d --build geo-tree-api
 **Publish a new APK** (the URL and the printed QR never change):
 
 ```powershell
-.\gradlew.bat :android:app:assembleDebug -Pgeotree.baseUrl=https://geotree.museuma7k9x3.tech
-tools\distribution\.venv\Scripts\python.exe tools\distribution\prepare_release.py --apk android\app\build\outputs\apk\debug\app-debug.apk
+# Distribution build (0.7.0+): non-debuggable release signed with the SAME certificate as earlier releases
+# (SHA-256 071b9904…, this machine's Android debug keystore), so installed apps upgrade in place. The keystore
+# passwords live outside the repository in %USERPROFILE%\GeoTreeSigning (keystore backup in its backup\ folder).
+.\gradlew.bat :android:app:assembleRelease -Pgeotree.baseUrl=https://geotree.museuma7k9x3.tech -Pgeotree.signingProperties=$env:USERPROFILE/GeoTreeSigning/geotree-distribution-signing.properties
+tools\distribution\.venv\Scripts\python.exe tools\distribution\prepare_release.py --apk android\app\build\outputs\apk\release\app-release.apk
+# on the server first: back up the live files
+#   B=/opt/geotree/backups/distribution-<old version>-$(date -u +%Y%m%d-%H%M%S); mkdir -p $B
+#   cp -p /opt/geotree/distribution/{GEO_Tree.apk,index.html,SHA256SUMS} $B/ && (cd $B && sha256sum -c SHA256SUMS)
 scp -i ~/.ssh/id_ed25519_hostinger_vps tools\distribution\release\GEO_Tree.apk root@<vps>:/opt/geotree/distribution/.GEO_Tree.apk.upload
 scp -i ~/.ssh/id_ed25519_hostinger_vps tools\distribution\release\index.html  root@<vps>:/opt/geotree/distribution/.index.html.upload
-scp -i ~/.ssh/id_ed25519_hostinger_vps tools\distribution\release\SHA256SUMS  root@<vps>:/opt/geotree/distribution/SHA256SUMS
-# on the server: cd /opt/geotree/distribution && mv -f .GEO_Tree.apk.upload GEO_Tree.apk && mv -f .index.html.upload index.html && sha256sum -c SHA256SUMS
+scp -i ~/.ssh/id_ed25519_hostinger_vps tools\distribution\release\SHA256SUMS  root@<vps>:/opt/geotree/distribution/.SHA256SUMS.upload
+# on the server (hidden names are never served): check sha256sum of .GEO_Tree.apk.upload equals the local SHA-256, then
+#   cd /opt/geotree/distribution && mv -f .GEO_Tree.apk.upload GEO_Tree.apk && mv -f .index.html.upload index.html && mv -f .SHA256SUMS.upload SHA256SUMS && sha256sum -c SHA256SUMS
+# from outside: download https://geotree.museuma7k9x3.tech/download/GEO_Tree.apk; compare SHA-256, aapt versionCode, apksigner certificate
+# rollback: move the files from $B back the same way (phones already on the newer version cannot downgrade without uninstalling)
 ```
+
+Published 2026-10-12 14:06 UTC: **0.7.0** (versionCode 10), 215,375,455 bytes, SHA-256 `0d31a154672ef521a8e57705c0f74c051820c5221218b4bb4b5182353b0216c1`; previous 0.6.0 files in `/opt/geotree/backups/distribution-0.6.0-20261012-140258` (also `C:\Users\Admin\GeoTreeReleases\0.6.0`).
 
 The page `https://geotree.museuma7k9x3.tech/download` and the APK `…/download/GEO_Tree.apk` are served by `geo-tree-api` from `/opt/geotree/distribution` (read-only mount), separate from the museum's distribution folder. The QR (`tools/distribution/release/geotree_download_qr.png`, generate once) encodes exactly `https://geotree.museuma7k9x3.tech/download`. Install the QR tooling once with `python -m venv tools\distribution\.venv; tools\distribution\.venv\Scripts\python.exe -m pip install segno`.
 
@@ -694,6 +783,35 @@ docker compose -p geo_tree_prod down
 
 Never run `docker system prune`, `docker volume prune`, or any command against `museum_app_prod`.
 
+## 13. Web administration and roles
+
+**Run it locally.** `run.bat` builds `web/` (needs Node.js 20+; without Node the API still starts) and the API serves it at `http://localhost:8000/`. For live UI development: `cd web; npm ci; npm run dev` (Vite on `http://localhost:5173`, proxying `/api`, `/uploads` and `/download` to the local backend). Sign in with an Admin or Super Admin account; Field Tester accounts are told to use the Android app.
+
+```powershell
+cd web; npm ci; npm run typecheck; npm test; npm run build; cd ..   # build output: backend\web_dist (gitignored)
+```
+
+| Role | Web administration | Android app |
+|---|---|---|
+| `SUPER_ADMIN` | everything, including creating/editing/suspending Admins and assigning any role | field work + admin screens |
+| `ADMIN` | trees, tags, images, classifiers/training images, model training, assessments, analytics, activity; manages **Field Tester** accounts only | field work + admin screens |
+| `FIELD_TESTER` | no access (every `/api/v1/admin/*` route answers 403) | field work only |
+
+A user stored before roles existed is treated as a Field Tester. Nobody can change their own role or suspend themselves, and the last active Super Admin can never be demoted or suspended. The role and status are read from MongoDB on every request (a change applies at once); tokens carry `iat`, and a token issued before the account's `password_changed_at` is rejected.
+
+**First Super Admin (no hardcoded password).** Promote an existing account; its ID, password hash and history are unchanged:
+
+```bash
+docker exec geo-tree-api python scripts/promote_super_admin.py --email admin@gmail.com            # dry run
+docker exec geo-tree-api python scripts/promote_super_admin.py --email admin@gmail.com --confirm
+```
+
+**Passwords.** There is no email reset system: an administrator sets a new password in Users → Reset password (a random one is generated in the browser) and passes it on privately; the user's sessions end immediately. Passwords are never stored in the repository, the APK or the README. Ten failed sign-ins for one email within 15 minutes lock that email for the rest of the window (`LOGIN_MAX_FAILURES`, `LOGIN_WINDOW_SECONDS`).
+
+**Maps.** Tree Records → **View Map** (`/trees/map`, also *Field Map* in the sidebar) and Leaf Assessments or Images → **View Map** (`/field-evidence/map`) render interactive Leaflet maps inside the admin, with OpenStreetMap raster tiles (`tile.openstreetmap.org`, attribution on every map; the only third-party origin the CSP allows, images only; within the OSMF tile usage policy for light interactive use, no bulk downloading). Markers come only from records with valid coordinates (finite, in range, not 0,0); others are counted and listed, never placed. Field evidence (registration photos and leaf scans) has no GPS of its own and is shown at its tree's recorded position, one marker per tree. The tree detail page embeds a small map instead of linking out. Data: `GET /api/v1/admin/map/trees` and `GET /api/v1/admin/map/evidence` (marker fields only, a fixed number of queries per request).
+
+**Data rules the web follows.** GPS coordinates, accuracy and capture time are field evidence and are never edited. A metadata edit is a normal synced change (new `updated_at` + `server_version`, so phones pull it; newer `updated_at` wins). Tags are web-only (`tags` collection, `tag_ids` on trees; phone sync never removes them). Archive sets `archived` and a new `server_version` but keeps `updated_at`, so a pending phone edit is not discarded. Leaf assessments are read-only from the web; a later model never changes a recorded prediction. Significant actions go to the `audit_log` collection (no passwords, hashes or tokens). Dashboard "data completeness" = registration photo + GPS accuracy ≤ 10 m + at least one of age, taste category, yearly yield, fruit quality.
+
 ## API
 
 ```text
@@ -706,8 +824,11 @@ GET  /api/v1/trees/{id}
 POST /api/v1/trees/{id}/image           (multipart field: file)
 GET  /uploads/tree_images/{filename}
 
-# Leaf assessment (any signed-in user; 503 AI_DISABLED where AI is off)
+# Leaf assessment (any signed-in user; 503 AI_DISABLED where AI is off). Android 0.7.0+ classifies on the phone and
+# uses only status + model/head; the server-side assessment route stays for older APKs and tools.
 POST /api/v1/ai/leaf-assessment         (multipart: file, optional treeId) → classId, className, confidence, uncertain, model, modelVersion, probabilities
+GET  /api/v1/ai/status                  → ready, model, modelVersion, classes
+GET  /api/v1/ai/model/head              → the active classifier head in the on-device format (409 AI_MODEL_NOT_READY)
 # Leaf assessment history (any signed-in user; snake_case and ISO-8601 like tree sync)
 POST /api/v1/leaf-assessments/sync                 (one finished scan; idempotent by assessment_id)
 POST /api/v1/leaf-assessments/{assessmentId}/image (multipart field: file; stored once)
@@ -718,7 +839,22 @@ GET  /uploads/leaf_assessments/{filename}
 GET  /download                                     (public APK page, when DISTRIBUTION_DIR is set)
 GET  /download/GEO_Tree.apk
 GET  /api/v1/ai/status
-# Administration (role ADMIN)
+# Web administration (role ADMIN or SUPER_ADMIN; camelCase responses; paginated lists take page & pageSize)
+GET    /api/v1/admin/dashboard
+GET    /api/v1/admin/activity?action=&actor=
+GET    /api/v1/admin/users?q=&role=&status=        POST /api/v1/admin/users
+PATCH  /api/v1/admin/users/{id}                    {"displayName"?, "role"?, "active"?}
+POST   /api/v1/admin/users/{id}/password           {"password"}  (revokes the user's older tokens)
+GET    /api/v1/admin/trees?q=&status=active|archived|all&hasImage=&tagId=&sort=
+GET    /api/v1/admin/trees/{id}                    PATCH (treeCode, age, tasteCategory, yearlyYield, fruitQuality, notes, tagIds)
+POST   /api/v1/admin/trees/{id}/archive            POST /api/v1/admin/trees/{id}/restore
+POST   /api/v1/admin/trees/{id}/image              DELETE /api/v1/admin/trees/{id}/image
+GET    /api/v1/admin/tags                          POST, PATCH /{id}, DELETE /{id} (detaches from trees)
+GET    /api/v1/admin/assessments?q=&treeId=&status=&className=&from=&to=&hasImage=
+GET    /api/v1/admin/assessments/facets            GET /api/v1/admin/assessments/{id}
+GET    /api/v1/admin/ai/models                     GET /api/v1/admin/ai/jobs
+GET    /api/v1/admin/map/trees?status=&tagId=&q=   GET /api/v1/admin/map/evidence?type=all|registration|assessment&status=&from=&to=&treeId=&q=&includeArchived=
+# Classifier administration (role ADMIN or SUPER_ADMIN; also used by the Android admin screens)
 GET    /api/v1/admin/classifiers
 POST   /api/v1/admin/classifiers                          {"name": "..."}
 PATCH  /api/v1/admin/classifiers/{id}                     {"name": "..."}
@@ -749,14 +885,16 @@ Errors are structured as `{"error": {"code": "...", "message": "...", "details":
 - Session expiry uses the phone's clock; a badly wrong clock can pause sync early or late (the server still enforces the real expiry).
 - **The emulator camera shows a virtual room**, not a tree. Capture, preview, file persistence and upload are verified, but real photo quality needs a physical device.
 - Emulator GPS accuracy is synthetic. Field accuracy has to be measured on real devices.
-- One user role and development authentication only. JWTs last 7 days. After expiry, sync pauses ("Sign in to sync") while local work continues.
+- Roles: Super Admin, Admin, Field Tester (section 13). JWTs last 7 days; a password change revokes older tokens. Sign-in throttling is in memory (cleared by an API restart). Trees archived on the web stay visible in APKs older than 0.6.0. After expiry, sync pauses ("Sign in to sync") while local work continues.
 - Editing after save is limited to changing the Tree Code (to resolve conflicts). There is no delete in Give 1.
-- **New leaf scans need the local AI backend**; there is no on-device model. History is local-first (Room) and syncs to MongoDB when the backend is reachable.
+- **On-device model limits.** The APK carries one backbone (DINOv2 ViT-S/14 at 336 px); only the small classifier head can be updated over the network. A new class created on the web reaches phones only after the model is retrained and the phone syncs online with a backend that has `GET /api/v1/ai/model/head` (0.7.0+); until then phones keep predicting with their current classes. Changing the backbone or preprocessing needs a new APK. Inference takes about a second on the emulator (measured below); slower phones will take longer, and the ONNX session uses roughly 250 MB of native memory while loaded.
+- **Decoding differences.** The phone decodes photos with Android's decoder and the server with Pillow. On the emulator, all 137 JPEG/PNG photos decoded to identical pixels (section 11). A HEIC photo picked straight from the gallery (e.g. an iPhone transfer) is decoded by Android's HEIF decoder while the server converts HEIC with libheif; that path was not measured and may differ slightly. HEIC needs Android 9+.
+- **Not yet measured on a physical phone.** Parity, timing and memory figures come from the x86_64 emulator; a mid-range ARM phone may be slower. The first assessment after the app starts also creates the ONNX session (about 0.4–10 s on the emulator).
 - A scan of a tree that has not reached the server yet waits (sync FAILED, "Waiting for its tree to sync first.") and is retried on the next sync. A photo format the server cannot store (e.g. a HEIC picked from the gallery) stays on the phone; the result still syncs.
 - Scans pulled from another device show their photo only while the server is reachable (there is no offline copy of other devices' photos). Assessments cannot be deleted or edited in the app.
 - Back-stack behaviour (result → Tree Detail, history → detail → Tree Detail) was verified on the emulator; it has no automated UI test (the unit tests run on the JVM without an Android navigation host).
 - **AI accuracy was measured on a small dataset** (section 11) and is not a general claim. The admin photo picker reports Android's media names (e.g. `241.png`) as file names, not the original camera names.
-- The debug APK is large (about 63 MB, of which the offline map is about 5.4 MB compressed) because MapLibre ships native libraries for all ABIs. Use ABI splits or an App Bundle for release.
+- The debug APK is large: about 220 MB in 0.7.0 (on-device model 81 MB compressed, ONNX Runtime native libraries about 75 MB and MapLibre about 42 MB for four ABIs, offline map 5.4 MB). Restricting ABIs to arm64-v8a/armeabi-v7a, ABI splits or an App Bundle would roughly halve the download.
 
 ## Next milestone
 

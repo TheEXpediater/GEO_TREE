@@ -59,10 +59,13 @@ class TreeOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     server_version: int
+    # Soft delete from the web administration; phones hide archived trees (older apps ignore it).
+    archived: bool = False
 
     @classmethod
     def from_document(cls, doc: dict) -> "TreeOut":
         data = {key: doc.get(key) for key in cls.model_fields}
+        data["archived"] = bool(doc.get("archived", False))
         for key in ("location_captured_at", "created_at", "updated_at"):
             data[key] = _as_utc(data[key])
         return cls(**data)

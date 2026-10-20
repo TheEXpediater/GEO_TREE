@@ -146,6 +146,7 @@ fun GeoTreeNavHost(modifier: Modifier = Modifier) {
                         onOpenMap = { navController.navigateToTab(Routes.MAP) },
                         onOpenTree = { id -> navController.navigate(Routes.treeDetail(id)) },
                         onSignInToSync = { navController.navigate(Routes.REAUTH) },
+                        onOpenClassifiers = { navController.navigate(Routes.CLASSIFIERS) },
                     )
                 }
                 composable(Routes.MAP) { entry ->

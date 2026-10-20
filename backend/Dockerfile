@@ -17,6 +17,9 @@ COPY main.py .
 COPY app ./app
 # Operator utilities (e.g. scripts/bootstrap_admin.py for a production admin account).
 COPY scripts ./scripts
+# The built web administration (npm run build in ../web writes backend/web_dist). Optional: the
+# bracket pattern copies nothing when it has not been built, and the API then serves no web pages.
+COPY web_dis[t] ./web_dist/
 
 RUN useradd --create-home geotree \
     && mkdir -p /app/uploads/tree_images /app/ai_data \

@@ -1,5 +1,6 @@
 package com.geotree.app.core.database
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
@@ -9,7 +10,8 @@ enum class SyncStatus { PENDING, SYNCING, SYNCED, FAILED }
 /**
  * A registered tamarind tree. [id] is a device-generated UUID and the permanent identity;
  * coordinates are attributes only. Images live on disk ([localImagePath]) and on the
- * server ([remoteImagePath]); bytes are never stored here.
+ * server ([remoteImagePath]); bytes are never stored here. [archived] is set by an administrator
+ * on the web (soft delete); archived trees are hidden from lists and the map but kept on disk.
  */
 @Entity(
     tableName = "trees",
@@ -38,6 +40,7 @@ data class TreeEntity(
     val syncStatus: SyncStatus,
     val serverVersion: Long?,
     val lastSyncError: String?,
+    @ColumnInfo(defaultValue = "0") val archived: Boolean = false,
 )
 
 data class SyncStatusCount(val syncStatus: SyncStatus, val count: Int)

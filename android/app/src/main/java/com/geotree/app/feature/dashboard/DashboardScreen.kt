@@ -65,10 +65,17 @@ import com.geotree.app.core.design.TreeImage
 import com.geotree.app.core.network.BackendReachability
 import com.geotree.app.core.design.label
 import com.geotree.app.core.design.tone
+import com.geotree.app.feature.admin.AdminSection
 import com.geotree.app.geoViewModel
 
 @Composable
-fun DashboardScreen(onTagTree: () -> Unit, onOpenMap: () -> Unit, onOpenTree: (String) -> Unit, onSignInToSync: () -> Unit) {
+fun DashboardScreen(
+    onTagTree: () -> Unit,
+    onOpenMap: () -> Unit,
+    onOpenTree: (String) -> Unit,
+    onSignInToSync: () -> Unit,
+    onOpenClassifiers: () -> Unit = {},
+) {
     val viewModel = geoViewModel { c, _ ->
         DashboardViewModel(
             repository = c.treeRepository,
@@ -106,6 +113,10 @@ fun DashboardScreen(onTagTree: () -> Unit, onOpenMap: () -> Unit, onOpenTree: (S
             item { PendingBanner(message, state.syncRunning, onSyncNow = viewModel::syncNow) }
         }
         item { QuickActions(onTagTree = onTagTree, onOpenMap = onOpenMap, onSyncNow = viewModel::syncNow, syncRunning = state.syncRunning) }
+        // Role-aware: administrators get their tools right on the landing screen (field testers never see it).
+        if (state.isAdmin) {
+            item { AdminSection(onOpenClassifiers = onOpenClassifiers) }
+        }
         item { FieldStatusCard(state) }
         item { SectionTitle("Recent trees") }
         if (state.recentTrees.isEmpty()) {

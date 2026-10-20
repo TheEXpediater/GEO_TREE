@@ -75,6 +75,8 @@ data class TreeDto(
     @SerialName("created_at") val createdAt: String,
     @SerialName("updated_at") val updatedAt: String,
     @SerialName("server_version") val serverVersion: Long,
+    /** Soft delete from the web administration (absent on older servers). */
+    val archived: Boolean = false,
 )
 
 @Serializable

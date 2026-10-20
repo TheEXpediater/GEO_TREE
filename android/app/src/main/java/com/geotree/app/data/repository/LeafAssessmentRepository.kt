@@ -1,11 +1,12 @@
 package com.geotree.app.data.repository
 
+import com.geotree.app.core.ai.LeafClassifier
+import com.geotree.app.core.ai.LeafInferenceErrors
+import com.geotree.app.core.ai.LeafModelInfo
 import com.geotree.app.core.database.AssessmentStatus
 import com.geotree.app.core.database.LeafAssessmentDao
 import com.geotree.app.core.database.LeafAssessmentEntity
 import com.geotree.app.core.database.SyncStatus
-import com.geotree.app.data.remote.AiStatusDto
-import com.geotree.app.data.remote.GeoTreeAiApi
 import com.geotree.app.data.remote.LeafAssessmentRecordDto
 import com.geotree.app.data.remote.toNewSyncedEntity
 import java.io.File
@@ -13,25 +14,23 @@ import java.util.UUID
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.MultipartBody
-import okhttp3.RequestBody.Companion.asRequestBody
-import okhttp3.RequestBody.Companion.toRequestBody
 
 /**
  * Leaf assessment history. Every scan is its own permanent record with its own UUID:
  *
- *   photo saved → record inserted as PROCESSING (before any network call)
- *   → DINOv2 on the local AI server → COMPLETED / UNCERTAIN / FAILED (photo always kept)
+ *   photo saved → record inserted as PROCESSING
+ *   → DINOv2 + classifier head ON THIS DEVICE ([LeafClassifier]) → COMPLETED / UNCERTAIN / FAILED
  *   → sync PENDING → SyncEngine → FastAPI → MongoDB `leaf_assessments` → SYNCED
  *
+ * No network is needed to obtain a result: the model ships in the APK. A FAILED scan means the
+ * on-device model could not run (never "server offline"), and no class is ever invented.
  * A final record is never changed again except for its sync fields; "assess again" creates a
  * new record. The current leaf status is derived from history, never stored on the tree.
  * Inference runs in [scope] (application-lifetime), so leaving the screen does not cancel it.
  */
 class LeafAssessmentRepository(
     private val dao: LeafAssessmentDao,
-    private val api: suspend () -> GeoTreeAiApi,
+    private val classifier: LeafClassifier,
     private val scope: CoroutineScope,
     /** Called when a scan finishes, e.g. to request a background sync. */
     private val onFinished: () -> Unit = {},
@@ -44,10 +43,11 @@ class LeafAssessmentRepository(
 
     fun observeAssessment(id: String): Flow<LeafAssessmentEntity?> = dao.observeAssessmentById(id)
 
-    suspend fun aiStatus(): AiResult<AiStatusDto> = aiCall { api().aiStatus() }
+    /** The on-device model a new scan would use. Local only: never contacts the server. */
+    suspend fun modelStatus(): AiResult<LeafModelInfo> = classifier.status()
 
     /**
-     * Records a new scan (PROCESSING) and starts the AI request in the background.
+     * Records a new scan (PROCESSING) and starts on-device inference in the background.
      * Returns once the record is safely in Room, so the caller can navigate to its result page.
      */
     suspend fun start(treeId: String, imagePath: String): LeafAssessmentEntity {
@@ -75,14 +75,7 @@ class LeafAssessmentRepository(
     private suspend fun process(id: String) {
         val record = dao.getById(id)?.takeIf { it.status == AssessmentStatus.PROCESSING } ?: return
         val photo = record.imageLocalPath?.let(::File)
-        val result = if (photo == null || !photo.isFile) {
-            AiResult.Failed(AiProblem.Rejected("IMAGE_MISSING", "The leaf photo is no longer on this device. Take a new photo."))
-        } else {
-            aiCall {
-                val part = MultipartBody.Part.createFormData("file", photo.name, photo.asRequestBody("image/jpeg".toMediaType()))
-                api().assessLeaf(part, record.treeId.toRequestBody("text/plain".toMediaType()))
-            }
-        }
+        val result = if (photo == null || !photo.isFile) LeafInferenceErrors.imageMissing() else classifier.classify(photo)
         val now = clock()
         val finished = when (result) {
             is AiResult.Ok -> record.copy(
@@ -110,7 +103,7 @@ class LeafAssessmentRepository(
         onFinished()
     }
 
-    /** At process start: scans whose request died with the process are recorded as FAILED. */
+    /** At process start: scans whose inference died with the process are recorded as FAILED. */
     suspend fun failInterrupted(): Int =
         dao.failInterrupted("The assessment was interrupted before a result arrived. The photo is kept.", clock())
 

@@ -15,7 +15,7 @@ import kotlinx.coroutines.flow.map
  */
 data class Session(val accessToken: String, val email: String, val expiresAtMillis: Long, val role: String? = null) {
     /** Shows admin-only entry points. The server still enforces the role on every admin request. */
-    val isAdmin: Boolean get() = role == ROLE_ADMIN
+    val isAdmin: Boolean get() = role == ROLE_ADMIN || role == ROLE_SUPER_ADMIN
 
     /**
      * True once the server-issued expiry (JWT `exp`, 7 days after sign-in) has passed on this
@@ -26,6 +26,7 @@ data class Session(val accessToken: String, val email: String, val expiresAtMill
 
     companion object {
         const val ROLE_ADMIN = "ADMIN"
+        const val ROLE_SUPER_ADMIN = "SUPER_ADMIN"
     }
 }
 

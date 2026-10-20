@@ -106,9 +106,9 @@ class TreeDetailViewModel(
     private val _aiAvailability = MutableStateFlow<AiAvailability>(AiAvailability.Checking)
     val aiAvailability: StateFlow<AiAvailability> = _aiAvailability.asStateFlow()
 
-    /** Best effort and informational: the tree screen never waits for the AI server. */
+    /** Informational: whether the on-device model is installed and intact. Never uses the network. */
     fun refreshAiAvailability() {
-        viewModelScope.launch { _aiAvailability.value = leafRepository.aiStatus().toAvailability() }
+        viewModelScope.launch { _aiAvailability.value = leafRepository.modelStatus().toAvailability() }
     }
 
     private val _renameError = MutableStateFlow<String?>(null)

@@ -41,8 +41,10 @@ class AdminAccessTest {
     }
 
     @Test
-    fun `only the ADMIN role shows admin entry points`() {
+    fun `only the ADMIN and SUPER_ADMIN roles show admin entry points`() {
         assertTrue(Session("t", "a@b.c", 0, role = "ADMIN").isAdmin)
+        assertTrue(Session("t", "a@b.c", 0, role = "SUPER_ADMIN").isAdmin)
+        assertFalse(Session("t", "a@b.c", 0, role = "FIELD_TESTER").isAdmin)
         assertFalse(Session("t", "a@b.c", 0, role = "FIELD").isAdmin)
         assertFalse(Session("t", "a@b.c", 0).isAdmin)
         assertFalse(adminSectionVisible(null))

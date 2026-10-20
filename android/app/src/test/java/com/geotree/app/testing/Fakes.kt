@@ -60,10 +60,10 @@ class FakeTreeDao : TreeDao {
         record(tree)
     }
 
-    override fun observeAll(): Flow<List<TreeEntity>> = rows.map { it.values.sortedByDescending(TreeEntity::createdAt) }
+    override fun observeAll(): Flow<List<TreeEntity>> = rows.map { m -> m.values.filterNot(TreeEntity::archived).sortedByDescending(TreeEntity::createdAt) }
     override fun observeById(id: String): Flow<TreeEntity?> = rows.map { it[id] }
     override fun observeStatusCounts(): Flow<List<SyncStatusCount>> =
-        rows.map { m -> m.values.groupingBy { it.syncStatus }.eachCount().map { SyncStatusCount(it.key, it.value) } }
+        rows.map { m -> m.values.filterNot(TreeEntity::archived).groupingBy { it.syncStatus }.eachCount().map { SyncStatusCount(it.key, it.value) } }
     override suspend fun count(): Int = rows.value.size
     override suspend fun getById(id: String): TreeEntity? = rows.value[id]
     override suspend fun getByTreeCode(treeCode: String): TreeEntity? = rows.value.values.firstOrNull { it.treeCode == treeCode }

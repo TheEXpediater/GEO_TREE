@@ -19,7 +19,7 @@ import androidx.compose.ui.unit.dp
 import com.geotree.app.R
 import com.geotree.app.core.session.Session
 
-/** Admin tools appear only for the ADMIN role; the server enforces the role on every admin call. */
+/** Admin tools appear only for Admin and Super Admin; the server enforces the role on every admin call. */
 fun adminSectionVisible(session: Session?): Boolean = session?.isAdmin == true
 
 @Composable
@@ -28,7 +28,7 @@ fun AdminSection(onOpenClassifiers: () -> Unit, modifier: Modifier = Modifier) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("Administration", style = MaterialTheme.typography.titleMedium)
             Text(
-                "Manage the tamarind leaf classes and training images used by the DINOv2 leaf classifier on the local AI server.",
+                "Manage the tamarind leaf classes, training images and model training for the DINOv2 leaf classifier.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

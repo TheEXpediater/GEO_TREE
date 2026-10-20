@@ -12,12 +12,12 @@ sealed interface AiProblem {
 
     data class Unreachable(val detail: String) : AiProblem {
         override val code = "UNREACHABLE"
-        override val message = "The GEO Tree AI server is not reachable. Leaf assessment needs the local AI backend (run.bat on the laptop) on the same network."
+        override val message = "The GEO Tree server is not reachable. Classifier administration needs a connection to the GEO Tree backend; leaf assessment works offline."
     }
 
     data object SignInRequired : AiProblem {
         override val code = "UNAUTHORIZED"
-        override val message = "Your session has expired. Sign in again to use the AI server."
+        override val message = "Your session has expired. Sign in again to manage classifiers."
     }
 
     data object AdminRequired : AiProblem {
@@ -27,7 +27,7 @@ sealed interface AiProblem {
 
     data object AiDisabled : AiProblem {
         override val code = "AI_DISABLED"
-        override val message = "Leaf assessment is not enabled on this server. Connect to the local GEO Tree AI backend."
+        override val message = "AI is not enabled on this server, so classifiers cannot be managed here. Leaf assessment still runs on this phone."
     }
 
     data class ModelNotReady(override val message: String) : AiProblem {

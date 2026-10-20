@@ -78,6 +78,19 @@ class TreeRepositoryTest {
     }
 
     @Test
+    fun `a tree archived on the web is stored as archived and hidden, and restoring shows it again`() = runTest {
+        val server = FakeGeoTreeServer()
+        val remote = server.addRemoteTree("uuid-archived", "GEO-TAM-020")
+
+        repository.applyRemoteChanges(listOf(remote.copy(archived = true, serverVersion = remote.serverVersion + 1)))
+
+        assertEquals(true, dao.getById("uuid-archived")!!.archived) // kept on the device, never deleted
+        assertEquals(emptyList<String>(), repository.observeTrees().first().map { it.id })
+        repository.applyRemoteChanges(listOf(remote.copy(archived = false, serverVersion = remote.serverVersion + 2)))
+        assertEquals(listOf("uuid-archived"), repository.observeTrees().first().map { it.id })
+    }
+
+    @Test
     fun `remote tree whose code is held by a different local tree blocks the cursor`() = runTest {
         repository.createTree(draft("GEO-TAM-004")) // local, unsynced
         val server = FakeGeoTreeServer()

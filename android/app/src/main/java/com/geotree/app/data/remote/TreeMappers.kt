@@ -47,4 +47,5 @@ fun TreeDto.toSyncedEntity(existing: TreeEntity?) = TreeEntity(
     syncStatus = SyncStatus.SYNCED,
     serverVersion = serverVersion,
     lastSyncError = null,
+    archived = archived,
 )

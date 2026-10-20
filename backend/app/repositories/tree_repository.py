@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from pymongo import ASCENDING, ReturnDocument
@@ -50,3 +51,41 @@ def changes_after(db: Database, after_version: int, limit: int) -> list[dict[str
         .limit(limit)
     )
     return list(cursor)
+
+
+_SORTS = {
+    "treeCode": ("tree_code_normalized", ASCENDING),
+    "-treeCode": ("tree_code_normalized", -1),
+    "createdAt": ("created_at", ASCENDING),
+    "-createdAt": ("created_at", -1),
+    "updatedAt": ("updated_at", ASCENDING),
+    "-updatedAt": ("updated_at", -1),
+}
+
+
+def admin_filter(query: str | None, status: str, has_image: bool | None, tag_id: str | None) -> dict[str, Any]:
+    conditions: list[dict[str, Any]] = []
+    if query:
+        conditions.append({"tree_code_normalized": {"$regex": re.escape(query.strip().upper())}})
+    if status == "active":
+        conditions.append({"archived": {"$ne": True}})
+    elif status == "archived":
+        conditions.append({"archived": True})
+    if has_image is True:
+        conditions.append({"image_path": {"$nin": [None, ""]}})
+    elif has_image is False:
+        conditions.append({"image_path": {"$in": [None, ""]}})
+    if tag_id:
+        conditions.append({"tag_ids": tag_id})
+    return {"$and": conditions} if conditions else {}
+
+
+def admin_page(db: Database, selector: dict[str, Any], sort: str, skip: int, limit: int) -> tuple[list[dict[str, Any]], int]:
+    field, direction = _SORTS.get(sort, _SORTS["-createdAt"])
+    total = db[TREES].count_documents(selector)
+    cursor = db[TREES].find(selector, _PROJECTION).sort([(field, direction), ("id", ASCENDING)]).skip(skip).limit(limit)
+    return list(cursor), total
+
+
+def all_trees(db: Database, projection: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    return list(db[TREES].find({}, projection or _PROJECTION))

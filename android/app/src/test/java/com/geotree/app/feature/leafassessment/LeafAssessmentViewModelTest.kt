@@ -2,7 +2,7 @@ package com.geotree.app.feature.leafassessment
 
 import com.geotree.app.core.database.AssessmentStatus
 import com.geotree.app.data.repository.LeafAssessmentRepository
-import com.geotree.app.testing.FakeAiServer
+import com.geotree.app.testing.FakeLeafClassifier
 import com.geotree.app.testing.FakeLeafAssessmentDao
 import java.io.File
 import kotlinx.coroutines.Dispatchers
@@ -28,7 +28,7 @@ class LeafAssessmentViewModelTest {
     @get:Rule val temp = TemporaryFolder()
 
     private val dispatcher = StandardTestDispatcher()
-    private val server = FakeAiServer()
+    private val classifier = FakeLeafClassifier()
     private val dao = FakeLeafAssessmentDao()
     private val deleted = mutableListOf<String>()
     private var now = 1_790_000_000_000
@@ -41,25 +41,24 @@ class LeafAssessmentViewModelTest {
 
     private fun photo(name: String = "leaf.jpg"): File = temp.newFile(name).apply { writeBytes(byteArrayOf(1, 2, 3)) }
 
-    private fun TestScope.repository() = LeafAssessmentRepository(dao, { server }, scope = this, clock = { now++ })
+    private fun TestScope.repository() = LeafAssessmentRepository(dao, classifier, scope = this, clock = { now++ })
 
     private fun TestScope.viewModel(import: suspend (String) -> File? = { null }) =
         LeafAssessmentViewModel("tree-1", repository(), import) { deleted += it }.also { advanceUntilIdle() }
 
     @Test
-    fun `availability reflects whether a model is ready`() = runTest(dispatcher) {
-        assertTrue(viewModel().state.value.availability is AiAvailability.NotReady)
-        server.assessment = FakeAiServer.result()
+    fun `availability reflects whether the on-device model is usable`() = runTest(dispatcher) {
+        val missing = viewModel().state.value.availability as AiAvailability.NotReady
+        assertEquals(FakeLeafClassifier.NO_MODEL, missing.message)
+        classifier.prediction = FakeLeafClassifier.result(version = 3)
         val ready = viewModel().state.value.availability as AiAvailability.Ready
         assertEquals("DINOv2 ViT-S/14", ready.modelDisplayName)
         assertEquals(3, ready.modelVersion)
-        server.unreachable = true
-        assertTrue(viewModel().state.value.availability is AiAvailability.Unavailable)
     }
 
     @Test
     fun `run assessment records the scan before handing over to the result page`() = runTest(dispatcher) {
-        server.assessment = FakeAiServer.result()
+        classifier.prediction = FakeLeafClassifier.result()
         val vm = viewModel()
         val file = photo()
         vm.onImageCaptured(file)
@@ -81,8 +80,8 @@ class LeafAssessmentViewModelTest {
     }
 
     @Test
-    fun `offline run still records a scan and keeps its photo`() = runTest(dispatcher) {
-        server.unreachable = true
+    fun `a failed on-device run still records a scan and keeps its photo`() = runTest(dispatcher) {
+        classifier.failure = FakeLeafClassifier.inferenceFailure
         val vm = viewModel()
         val file = photo()
         vm.onImageCaptured(file)
@@ -91,7 +90,7 @@ class LeafAssessmentViewModelTest {
 
         val record = dao.rows.value.getValue(requireNotNull(vm.state.value.startedAssessmentId))
         assertEquals(AssessmentStatus.FAILED, record.status)
-        assertEquals("UNREACHABLE", record.errorCode)
+        assertEquals("INFERENCE_FAILED", record.errorCode)
         assertTrue(File(record.imageLocalPath!!).isFile)
         assertTrue(deleted.isEmpty())
     }

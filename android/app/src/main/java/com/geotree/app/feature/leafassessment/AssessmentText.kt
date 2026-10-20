@@ -54,5 +54,4 @@ fun availabilityPill(availability: AiAvailability): Pair<String, PillTone> = whe
     AiAvailability.Checking -> "Checking AI…" to PillTone.Neutral
     is AiAvailability.Ready -> "AI ready" to PillTone.Good
     is AiAvailability.NotReady -> "Model not ready" to PillTone.Warning
-    is AiAvailability.Unavailable -> "AI server offline" to PillTone.Neutral
 }

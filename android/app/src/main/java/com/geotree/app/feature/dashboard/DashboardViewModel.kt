@@ -52,7 +52,9 @@ class DashboardViewModel(
     private val now = MutableStateFlow(clock())
     private val sessionState = combine(session, now) { s, t -> if (s == null) SessionState.NONE else sessionState(s, t) }
 
-    private val local = combine(repository.observeTrees(), repository.observeSyncCounts(), syncTracker.state, sessionState) { trees, counts, activity, s ->
+    private val isAdmin = session.map { it?.isAdmin == true }.distinctUntilChanged()
+
+    private val local = combine(repository.observeTrees(), repository.observeSyncCounts(), syncTracker.state, sessionState, isAdmin) { trees, counts, activity, s, admin ->
         val needsSignIn = authRequired(s, activity)
         DashboardUiState(
             counts = counts,
@@ -61,6 +63,7 @@ class DashboardViewModel(
             syncRunning = activity.running,
             session = s,
             authRequired = needsSignIn,
+            isAdmin = admin,
         )
     }
 

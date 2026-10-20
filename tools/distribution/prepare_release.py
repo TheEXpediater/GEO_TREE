@@ -39,18 +39,33 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def apk_version(apk: Path) -> str:
-    """versionName from the APK via aapt (Android SDK), or 'unknown'."""
+def apk_badging(apk: Path) -> dict[str, str]:
+    """versionName, versionCode and minSdk from the APK via aapt (Android SDK); 'unknown' if unavailable."""
+    info = {"versionName": "unknown", "versionCode": "unknown", "minSdk": "unknown"}
     sdk = Path.home() / "AppData/Local/Android/Sdk/build-tools"
     for aapt in sorted(sdk.glob("*/aapt*"), reverse=True):
         try:
             out = subprocess.run([str(aapt), "dump", "badging", str(apk)], capture_output=True, text=True, timeout=60).stdout
         except OSError:
             continue
-        for part in out.splitlines()[0].split():
-            if part.startswith("versionName="):
-                return part.split("=", 1)[1].strip("'")
-    return "unknown"
+        for part in out.splitlines()[0].split() if out else []:
+            for key in ("versionName", "versionCode"):
+                if part.startswith(key + "="):
+                    info[key] = part.split("=", 1)[1].strip("'")
+        for line in out.splitlines():
+            if line.startswith(("sdkVersion:", "minSdkVersion:")):  # aapt / aapt2
+                info["minSdk"] = line.split(":", 1)[1].strip("'")
+        if info["versionName"] != "unknown":
+            return info
+    return info
+
+
+# Android release for each minSdk level the app may declare (shown on the page).
+ANDROID_RELEASE = {"24": "7.0", "25": "7.1", "26": "8.0", "27": "8.1", "28": "9", "29": "10", "30": "11", "31": "12"}
+
+
+def apk_version(apk: Path) -> str:
+    return apk_badging(apk)["versionName"]
 
 
 PAGE = """<!doctype html>
@@ -83,8 +98,9 @@ PAGE = """<!doctype html>
     <p class="sub">Tamarind field mapping, field guidance and leaf assessment &middot; Android</p>
     <a class="button" href="/download/{apk}" download>Download GEO Tree {version}</a>
     <dl>
-      <dt>Version</dt><dd>{version}</dd>
-      <dt>Size</dt><dd>{size_mb:.1f} MB</dd>
+      <dt>Version</dt><dd>{version} (versionCode {version_code})</dd>
+      <dt>Size</dt><dd>{size_mb:.1f} MB ({size_bytes:,} bytes)</dd>
+      <dt>Requires</dt><dd>{requires}</dd>
       <dt>Published</dt><dd>{published}</dd>
       <dt>SHA-256</dt><dd><code>{digest}</code></dd>
     </dl>
@@ -104,7 +120,11 @@ PAGE = """<!doctype html>
 """
 
 
-def make_qr(url: str, out: Path) -> None:
+def make_qr(url: str, out: Path, regenerate: bool = False) -> None:
+    """Generates the QR once. An existing (printed) QR is kept as it is unless explicitly regenerated."""
+    if (out / "geotree_download_qr.png").is_file() and not regenerate:
+        print("QR kept unchanged (already generated; pass --regenerate-qr to replace it).")
+        return
     try:
         import segno
     except ImportError:
@@ -122,6 +142,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--apk", type=Path, required=True)
     parser.add_argument("--url", default=DEFAULT_URL, help="stable page URL encoded in the QR code")
     parser.add_argument("--out", type=Path, default=HERE / "release")
+    parser.add_argument("--regenerate-qr", action="store_true", help="replace an existing QR (normally never needed)")
     args = parser.parse_args(argv)
 
     if not args.url.endswith("/download"):
@@ -138,21 +159,27 @@ def main(argv: list[str] | None = None) -> int:
     if digest != sha256(apk):
         print("Copy verification failed.")
         return 1
-    version = apk_version(apk)
+    badging = apk_badging(apk)
+    version = badging["versionName"]
+    min_sdk = badging["minSdk"]
+    requires = f"Android {ANDROID_RELEASE[min_sdk]} or newer" if min_sdk in ANDROID_RELEASE else f"Android API level {min_sdk} or newer"
     (args.out / "SHA256SUMS").write_text(f"{digest}  {APK_NAME}\n", encoding="ascii")
     (args.out / "index.html").write_text(
         PAGE.format(
             apk=APK_NAME,
             version=html.escape(version),
+            version_code=html.escape(badging["versionCode"]),
             size_mb=target.stat().st_size / (1024 * 1024),
+            size_bytes=target.stat().st_size,
+            requires=html.escape(requires),
             published=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
             digest=digest,
         ),
         encoding="utf-8",
     )
-    make_qr(args.url, args.out)
+    make_qr(args.url, args.out, args.regenerate_qr)
     print(f"Release prepared in {args.out}")
-    print(f"  {APK_NAME}  version {version}  {target.stat().st_size} bytes")
+    print(f"  {APK_NAME}  version {version} (versionCode {badging['versionCode']}, minSdk {min_sdk})  {target.stat().st_size} bytes")
     print(f"  SHA-256 {digest}")
     return 0
 

@@ -20,6 +20,8 @@ class GeoTreeApplication : Application(), ImageLoaderFactory {
         CoroutineScope(SupervisorJob() + Dispatchers.Default).launch { container.offlineMapInstaller.ensureInstalled() }
         // A leaf scan whose request died with the previous process is kept as a FAILED history entry.
         container.applicationScope.launch { container.leafAssessmentRepository.failInterrupted() }
+        // Installs and verifies the bundled on-device leaf model now, so the first scan is fast.
+        container.applicationScope.launch(Dispatchers.IO) { container.leafClassifier.status() }
     }
 
     /** Coil shares the API's OkHttp client so server images carry the session token. */

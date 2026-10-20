@@ -7,7 +7,7 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [TreeEntity::class, LeafAssessmentEntity::class], version = 3, exportSchema = true)
+@Database(entities = [TreeEntity::class, LeafAssessmentEntity::class], version = 4, exportSchema = true)
 abstract class GeoTreeDatabase : RoomDatabase() {
     abstract fun treeDao(): TreeDao
     abstract fun leafAssessmentDao(): LeafAssessmentDao
@@ -66,11 +66,20 @@ abstract class GeoTreeDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) = MIGRATION_2_3_SQL.forEach(db::execSQL)
         }
 
+        /** v4 adds the web administration's soft delete. Existing trees stay active (0). */
+        val MIGRATION_3_4_SQL: List<String> = listOf(
+            "ALTER TABLE `trees` ADD COLUMN `archived` INTEGER NOT NULL DEFAULT 0",
+        )
+
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) = MIGRATION_3_4_SQL.forEach(db::execSQL)
+        }
+
         fun build(context: Context): GeoTreeDatabase =
             Room.databaseBuilder(context, GeoTreeDatabase::class.java, "geo_tree.db")
                 // Schema changes must ship explicit Migration objects (schemas/ is exported).
                 // Never fall back to destructive migration: field records must not be wiped.
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                 .build()
     }
 }

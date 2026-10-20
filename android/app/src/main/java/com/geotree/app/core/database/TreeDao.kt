@@ -10,13 +10,14 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface TreeDao {
-    @Query("SELECT * FROM trees ORDER BY createdAt DESC")
+    /** Active trees only; trees archived on the web are hidden (still stored, still sync). */
+    @Query("SELECT * FROM trees WHERE archived = 0 ORDER BY createdAt DESC")
     fun observeAll(): Flow<List<TreeEntity>>
 
     @Query("SELECT * FROM trees WHERE id = :id")
     fun observeById(id: String): Flow<TreeEntity?>
 
-    @Query("SELECT syncStatus, COUNT(*) AS count FROM trees GROUP BY syncStatus")
+    @Query("SELECT syncStatus, COUNT(*) AS count FROM trees WHERE archived = 0 GROUP BY syncStatus")
     fun observeStatusCounts(): Flow<List<SyncStatusCount>>
 
     @Query("SELECT COUNT(*) FROM trees")
