@@ -36,6 +36,16 @@ class Settings:
     dev_admin_password: str = "admin123"
     # Folder with the published APK download page (index.html + GEO_Tree.apk); None disables /download.
     distribution_dir: Path | None = None
+    # The public URL of the download page that the printed QR code encodes (e.g.
+    # https://<host>/download). Shown and encoded in Mobile Settings; None = not configured.
+    download_public_url: str | None = None
+    # SHA-256 of the established release signing certificate. A served APK signed with another key
+    # cannot upgrade installed apps, so Mobile Settings flags it and refuses to register it.
+    release_signer_sha256: str | None = None
+    # Private folder (outside any public route) for uploaded classifier dataset archives under
+    # validation/staging; None disables archive uploads on this server.
+    dataset_archive_dir: Path | None = None
+    dataset_archive_max_bytes: int = 600 * 1024 * 1024
     # Built web administration (npm run build in web/); a missing index.html means API only.
     web_dist_dir: Path | None = None
     # Failed sign-ins per email before a temporary lockout (0 disables), and the window.
@@ -91,6 +101,19 @@ def _image_storage_mode() -> str:
     return mode
 
 
+def _dataset_archive_dir() -> Path | None:
+    """DATASET_ARCHIVE_DIR, except on Render's ephemeral disk: archives there would silently vanish
+    on the next deploy or restart. A Render persistent disk can be declared with
+    DATASET_ARCHIVE_PERSISTENT=true."""
+    value = os.environ.get("DATASET_ARCHIVE_DIR", "").strip()
+    if not value:
+        return None
+    if _env_bool("RENDER", False) and not _env_bool("DATASET_ARCHIVE_PERSISTENT", False):
+        logger.warning("DATASET_ARCHIVE_DIR ignored on Render: its filesystem is ephemeral (set DATASET_ARCHIVE_PERSISTENT=true for a persistent disk).")
+        return None
+    return Path(value)
+
+
 def load_settings() -> Settings:
     _load_local_env_file()
     environment = os.environ.get("ENVIRONMENT", "development").strip().lower()
@@ -113,6 +136,10 @@ def load_settings() -> Settings:
         dev_admin_email=os.environ.get("DEV_ADMIN_EMAIL", "admin@gmail.com"),
         dev_admin_password=os.environ.get("DEV_ADMIN_PASSWORD", "admin123"),
         distribution_dir=Path(os.environ["DISTRIBUTION_DIR"]) if os.environ.get("DISTRIBUTION_DIR", "").strip() else None,
+        download_public_url=os.environ.get("DOWNLOAD_PUBLIC_URL", "").strip() or None,
+        release_signer_sha256=os.environ.get("RELEASE_SIGNER_SHA256", "").strip().lower().replace(":", "") or None,
+        dataset_archive_dir=_dataset_archive_dir(),
+        dataset_archive_max_bytes=int(os.environ.get("DATASET_ARCHIVE_MAX_BYTES", str(600 * 1024 * 1024))),
         web_dist_dir=Path(os.environ.get("WEB_DIST_DIR", "").strip() or str(BACKEND_ROOT / "web_dist")),
         login_max_failures=int(os.environ.get("LOGIN_MAX_FAILURES", "10")),
         login_window_seconds=int(os.environ.get("LOGIN_WINDOW_SECONDS", str(15 * 60))),

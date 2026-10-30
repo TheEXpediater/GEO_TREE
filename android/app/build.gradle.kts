@@ -9,12 +9,18 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
-// Default server: the LOCAL Docker backend through the emulator host alias. The DINOv2 leaf
-// assessment milestone is tested locally (never against the hosted deployment). Override per
-// build, e.g. `-Pgeotree.baseUrl=http://192.168.1.20:8000` (phone on the LAN) or
-// `-Pgeotree.baseUrl=https://geo-tree.onrender.com` (client APK against the hosted Render API);
-// the app also lets the user change and verify the server URL at runtime.
-val defaultBaseUrl = (findProperty("geotree.baseUrl") as String?) ?: "http://10.0.2.2:8000"
+// Default servers. Release (client) builds talk to the hosted Render API; debug builds to the
+// LOCAL Docker backend through the emulator host alias. `-Pgeotree.baseUrl=...` overrides both, e.g.
+// `-Pgeotree.baseUrl=http://192.168.1.20:8000` for a debug build on a phone on the LAN. A release
+// build must use a hosted HTTPS server that is not a retired host (checked by verifyReleaseBaseUrl
+// below). The address is not editable in Settings; the login screen keeps a verified "Change server"
+// for development.
+val baseUrlOverride = findProperty("geotree.baseUrl") as String?
+val releaseBaseUrl = baseUrlOverride ?: "https://geo-tree.onrender.com"
+val debugBaseUrl = baseUrlOverride ?: "http://10.0.2.2:8000"
+
+/** Hosts that no longer serve GEO Tree (the former Hostinger VPS expired on 2026-10-19). */
+val retiredHosts = setOf("geotree.museuma7k9x3.tech", "geotree.museuma7k9x.tech")
 
 /** localhost, loopback, the emulator alias and private LAN ranges: the development servers. */
 fun isLocalServer(url: String): Boolean {
@@ -31,7 +37,7 @@ fun isLocalServer(url: String): Boolean {
 // a hosted build starts with an empty password unless -Pgeotree.prefillPassword is supplied.
 val prefillEmail = (findProperty("geotree.prefillEmail") as String?) ?: "admin@gmail.com"
 val prefillPassword = (findProperty("geotree.prefillPassword") as String?)
-    ?: if (isLocalServer(defaultBaseUrl)) "admin123" else ""
+    ?: if (isLocalServer(debugBaseUrl)) "admin123" else ""
 
 // Distribution signing. The keystore and its passwords live OUTSIDE the repository in a properties
 // file (storeFile, storePassword, keyAlias, keyPassword) passed as
@@ -52,9 +58,8 @@ android {
         applicationId = "com.geotree.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 11
-        versionName = "0.8.0"
-        buildConfigField("String", "DEFAULT_BASE_URL", "\"$defaultBaseUrl\"")
+        versionCode = 13
+        versionName = "0.8.2"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -71,6 +76,7 @@ android {
 
     buildTypes {
         debug {
+            buildConfigField("String", "DEFAULT_BASE_URL", "\"$debugBaseUrl\"")
             // Development/test credentials: present in debug builds only (release stays empty).
             buildConfigField("String", "DEV_EMAIL", "\"$prefillEmail\"")
             buildConfigField("String", "DEV_PASSWORD", "\"$prefillPassword\"")
@@ -79,6 +85,7 @@ android {
             isMinifyEnabled = false
             isDebuggable = false
             signingConfigs.findByName("distribution")?.let { signingConfig = it }
+            buildConfigField("String", "DEFAULT_BASE_URL", "\"$releaseBaseUrl\"")
             buildConfigField("String", "DEV_EMAIL", "\"\"")
             buildConfigField("String", "DEV_PASSWORD", "\"\"")
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
@@ -104,6 +111,19 @@ android {
 ksp {
     arg("room.schemaLocation", "$projectDir/schemas")
 }
+
+// A client (release) APK must never default to a development server or plain HTTP.
+val verifyReleaseBaseUrl by tasks.registering {
+    val url = releaseBaseUrl
+    val hostedHttps = url.startsWith("https://") && !isLocalServer(url)
+    val host = url.substringAfter("://").substringBefore("/").substringBefore(":").lowercase()
+    doLast {
+        if (host.isEmpty()) throw GradleException("Release base URL is missing or invalid: '$url'")
+        if (!hostedHttps) throw GradleException("Release base URL must be a hosted HTTPS server, got: $url")
+        if (host in retiredHosts) throw GradleException("Release base URL points at a retired host ($host); use the Render API.")
+    }
+}
+tasks.matching { it.name == "preReleaseBuild" }.configureEach { dependsOn(verifyReleaseBaseUrl) }
 
 // The on-device leaf model (assets/leaf_model, gitignored: trained weights) must be present and
 // intact in every APK, or the first offline assessment would fail. Generate it with

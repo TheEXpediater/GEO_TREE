@@ -5,6 +5,9 @@
 # - No photo storage on Render: the free filesystem is ephemeral, so IMAGE_STORAGE=disabled (also the
 #   automatic default when RENDER=true). Records sync to MongoDB Atlas; photos stay on the phones.
 # - Secrets (MONGO_URI, JWT_SECRET) are entered in the Render dashboard (sync: false), never here.
+# - No dataset archives or APK files on Render: DATASET_ARCHIVE_DIR and DISTRIBUTION_DIR stay unset
+#   (an archive dir is ignored anyway while RENDER=true unless DATASET_ARCHIVE_PERSISTENT=true marks
+#   an attached persistent disk). Mobile Settings then reports uploads/downloads as not available.
 #
 # The existing service https://geo-tree.onrender.com was created in the dashboard; keep its settings
 # equal to this file (root directory, build/start command, health check, environment).

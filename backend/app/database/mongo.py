@@ -15,6 +15,10 @@ AI_MODELS = "ai_models"
 AI_JOBS = "ai_jobs"
 TAGS = "tags"
 AUDIT_LOG = "audit_log"
+# Mobile Settings: published APK releases, uploaded dataset archives, recorded model evaluations.
+APP_RELEASES = "app_releases"
+DATASET_ARCHIVES = "dataset_archives"
+MODEL_EVALUATIONS = "model_evaluations"
 
 
 def create_client(uri: str) -> MongoClient:
@@ -37,6 +41,14 @@ def ensure_indexes(db: Database) -> None:
     db[TREES].create_index([("tag_ids", ASCENDING)], name="tree_tags")
     db[AUDIT_LOG].create_index([("at", DESCENDING)], name="audit_at")
     db[AUDIT_LOG].create_index([("action", ASCENDING), ("at", DESCENDING)], name="audit_action")
+    # Mobile Settings (additive; nothing existing is changed).
+    db[APP_RELEASES].create_index([("id", ASCENDING)], unique=True, name="uniq_release_id")
+    db[APP_RELEASES].create_index([("apk_sha256", ASCENDING)], unique=True, name="uniq_release_sha256")
+    db[APP_RELEASES].create_index([("registered_at", DESCENDING)], name="release_history")
+    db[DATASET_ARCHIVES].create_index([("id", ASCENDING)], unique=True, name="uniq_archive_id")
+    db[DATASET_ARCHIVES].create_index([("uploaded_at", DESCENDING)], name="archive_history")
+    db[MODEL_EVALUATIONS].create_index([("id", ASCENDING)], unique=True, name="uniq_evaluation_id")
+    db[MODEL_EVALUATIONS].create_index([("model_version", DESCENDING), ("recorded_at", DESCENDING)], name="evaluation_model")
 
 
 def ensure_ai_indexes(db: Database) -> None:

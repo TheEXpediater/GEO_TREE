@@ -46,12 +46,18 @@ services:
       AI_VALIDATION_FRACTION: ${AI_VALIDATION_FRACTION:-0.2}
       AI_RETRAIN_DEBOUNCE_SECONDS: ${AI_RETRAIN_DEBOUNCE_SECONDS:-15}
       AI_CONFIDENCE_THRESHOLD: ${AI_CONFIDENCE_THRESHOLD:-0.6}
+      # Web admin Mobile Settings: the established release signing certificate (public; inside every
+      # APK) and private storage for uploaded dataset archives (validated and staged only).
+      RELEASE_SIGNER_SHA256: "071b9904d58bd907b6bfb5520555d55f31f29b2b7436b3218067d827efe43321"
+      DATASET_ARCHIVE_DIR: /app/datasets/archives
     ports:
       - "${GEO_TREE_API_HOST_PORT:-8000}:8000"
     volumes:
       - geo_tree_uploads:/app/uploads
       # Dataset images, cached DINOv2 features, model versions and the DINOv2 weight cache.
       - geo_tree_ai_data:/app/ai_data
+      # Uploaded classifier dataset archives under review (Mobile Settings > Dataset).
+      - geo_tree_dataset_archives:/app/datasets
 
 volumes:
   geo_tree_mongodb_data:
@@ -60,3 +66,5 @@ volumes:
     name: geo_tree_uploads
   geo_tree_ai_data:
     name: geo_tree_ai_data
+  geo_tree_dataset_archives:
+    name: geo_tree_dataset_archives

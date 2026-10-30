@@ -13,11 +13,12 @@ from fastapi.responses import FileResponse, RedirectResponse
 from app.auth.dependencies import get_settings
 from app.config import Settings
 from app.errors import ApiError
+from app.services.mobile_release import APK_FILE_NAME
 
 router = APIRouter(tags=["download"])
 
 PAGE = "index.html"
-APK = "GEO_Tree.apk"
+APK = APK_FILE_NAME
 _NO_CACHE = {"Cache-Control": "no-cache"}
 
 

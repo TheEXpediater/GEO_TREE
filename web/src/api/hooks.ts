@@ -3,14 +3,19 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tansta
 import { request, uploadWithProgress } from "./client";
 import type {
   ActivityEntry,
+  AppRelease,
   Assessment,
   ClassImages,
   ClassifierClass,
   ClassifierList,
   Dashboard,
+  DatasetArchive,
+  DatasetProfile,
   EvidenceResponse,
   JobView,
   MapTreesResponse,
+  MobileOverview,
+  ModelProfile,
   ModelStatus,
   ModelView,
   Page,
@@ -292,5 +297,68 @@ export function useEvidenceMap(query: Query) {
     queryKey: ["map-evidence", query],
     queryFn: ({ signal }) => request<EvidenceResponse>(`${ADMIN}/map/evidence`, { query, signal }),
     placeholderData: keepPreviousData,
+  });
+}
+
+// Mobile Settings -------------------------------------------------------------------------------
+const MOBILE = `${ADMIN}/mobile`;
+
+function invalidateMobile(client: ReturnType<typeof useQueryClient>) {
+  for (const key of ["mobile-overview", "mobile-releases", "mobile-model", "mobile-dataset", "activity"]) {
+    client.invalidateQueries({ queryKey: [key] });
+  }
+}
+
+export function useMobileOverview() {
+  return useQuery({ queryKey: ["mobile-overview"], queryFn: ({ signal }) => request<MobileOverview>(`${MOBILE}/overview`, { signal }) });
+}
+
+export function useReleases(query: Query) {
+  return useQuery({
+    queryKey: ["mobile-releases", query],
+    queryFn: ({ signal }) => request<Page<AppRelease>>(`${MOBILE}/releases`, { query, signal }),
+    placeholderData: keepPreviousData,
+  });
+}
+
+export function useRegisterRelease() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { notes: string; datasetArchiveId: string | null; baseline: boolean }) =>
+      request<AppRelease>(`${MOBILE}/releases`, { method: "POST", json: body }),
+    onSettled: () => invalidateMobile(client),
+  });
+}
+
+export function useModelProfile() {
+  return useQuery({ queryKey: ["mobile-model"], queryFn: ({ signal }) => request<ModelProfile>(`${MOBILE}/model`, { signal }) });
+}
+
+export function useDatasetProfile() {
+  return useQuery({
+    queryKey: ["mobile-dataset"],
+    queryFn: ({ signal }) => request<DatasetProfile>(`${MOBILE}/dataset`, { signal }),
+    // Poll only while an uploaded archive is still being validated.
+    refetchInterval: (query) => (query.state.data?.archives.some((a) => a.status === "VALIDATING") ? 2_000 : false),
+  });
+}
+
+export function useUploadArchive() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ file, onProgress }: { file: File; onProgress: (f: number) => void }) => {
+      const form = new FormData();
+      form.append("file", file, file.name);
+      return uploadWithProgress<DatasetArchive>(`${MOBILE}/dataset/archives`, form, onProgress);
+    },
+    onSettled: () => invalidateMobile(client),
+  });
+}
+
+export function useDiscardArchive() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => request<DatasetArchive>(`${MOBILE}/dataset/archives/${id}`, { method: "DELETE" }),
+    onSettled: () => invalidateMobile(client),
   });
 }

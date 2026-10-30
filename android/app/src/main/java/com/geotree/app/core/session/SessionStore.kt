@@ -14,8 +14,15 @@ import kotlinx.coroutines.flow.map
  * session stored before roles existed until the profile is refreshed from /auth/me.
  */
 data class Session(val accessToken: String, val email: String, val expiresAtMillis: Long, val role: String? = null) {
-    /** Shows admin-only entry points. The server still enforces the role on every admin request. */
-    val isAdmin: Boolean get() = role == ROLE_ADMIN || role == ROLE_SUPER_ADMIN
+    /** The account role for display (Settings → Account); the server enforces every permission. */
+    val roleLabel: String?
+        get() = when (role) {
+            null, "" -> null
+            ROLE_FIELD_TESTER -> "Field Tester"
+            ROLE_ADMIN -> "Admin"
+            ROLE_SUPER_ADMIN -> "Super Admin"
+            else -> role
+        }
 
     /**
      * True once the server-issued expiry (JWT `exp`, 7 days after sign-in) has passed on this
@@ -25,6 +32,7 @@ data class Session(val accessToken: String, val email: String, val expiresAtMill
     fun isExpired(nowMillis: Long): Boolean = expiresAtMillis in 1..nowMillis
 
     companion object {
+        const val ROLE_FIELD_TESTER = "FIELD_TESTER"
         const val ROLE_ADMIN = "ADMIN"
         const val ROLE_SUPER_ADMIN = "SUPER_ADMIN"
     }

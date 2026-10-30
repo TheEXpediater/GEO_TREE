@@ -3,3 +3,5 @@
 pytest==9.1.1
 httpx==0.28.1
 mongomock==4.3.0
+# Test-only QR decoder: proves the rendered download QR decodes to the configured URL.
+zxing-cpp==3.1.1

@@ -24,7 +24,6 @@ import com.geotree.app.core.sync.SyncPreferences
 import com.geotree.app.core.sync.SyncScheduler
 import com.geotree.app.core.sync.SyncStatusTracker
 import com.geotree.app.data.repository.AuthRepository
-import com.geotree.app.data.repository.ClassifierRepository
 import com.geotree.app.data.repository.LeafAssessmentRepository
 import com.geotree.app.data.repository.LocalImageReader
 import com.geotree.app.data.repository.TreeRepository
@@ -98,8 +97,6 @@ class AppContainer(context: Context) {
         )
     }
 
-    /** Admin: the server-side classifier dataset (classes, training images, model status). */
-    val classifierRepository = ClassifierRepository(apiProvider::aiApi, apiProvider::url)
 
     val syncStatusTracker = SyncStatusTracker()
     val syncPreferences = SyncPreferences(preferences)

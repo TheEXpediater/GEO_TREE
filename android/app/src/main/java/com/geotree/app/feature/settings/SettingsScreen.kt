@@ -15,6 +15,7 @@ import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
@@ -42,42 +43,50 @@ import com.geotree.app.BuildConfig
 import com.geotree.app.core.design.Formatters
 import com.geotree.app.core.design.StatusPill
 import com.geotree.app.core.network.BackendConnectionManager
-import com.geotree.app.core.session.Session
-import com.geotree.app.core.network.BackendReachability
 import com.geotree.app.core.network.BackendStatus
+import com.geotree.app.core.session.Session
+import com.geotree.app.core.session.SessionState
+import com.geotree.app.core.session.sessionState
+import com.geotree.app.core.sync.SyncActivity
 import com.geotree.app.core.sync.SyncScheduler
+import com.geotree.app.core.sync.authRequired
 import com.geotree.app.data.repository.AuthRepository
 import com.geotree.app.data.repository.SyncCounts
 import com.geotree.app.data.repository.TreeRepository
-import com.geotree.app.feature.admin.AdminSection
-import com.geotree.app.feature.admin.adminSectionVisible
 import com.geotree.app.feature.dashboard.coverageText
 import com.geotree.app.feature.dashboard.display
 import com.geotree.app.feature.dashboard.offlineMapStatusLabel
-import com.geotree.app.feature.locator.map.OfflineMapRegion
 import com.geotree.app.feature.locator.map.Basemap
 import com.geotree.app.feature.locator.map.MapSourceSettings
 import com.geotree.app.feature.locator.map.MapSourceType
+import com.geotree.app.feature.locator.map.OfflineMapRegion
 import com.geotree.app.feature.locator.map.OfflineMapState
 import com.geotree.app.feature.locator.map.resolveBasemap
-import com.geotree.app.feature.login.ServerSettingsDialog
+import com.geotree.app.feature.locator.syncIndicator
 import com.geotree.app.feature.navigation.NavigationConfig
 import com.geotree.app.geoViewModel
 import java.util.Locale
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
+/**
+ * Settings has exactly three sections: Synchronization, Map and Account. The server address is a
+ * build setting (the Render API in client builds), not something to edit here; classifier and
+ * user administration live in the web admin.
+ */
 class SettingsViewModel(
     repository: TreeRepository,
-    email: Flow<String?>,
+    unsyncedScans: Flow<Int>,
     session: Flow<Session?>,
     backendUrl: Flow<String>,
     lastSyncAt: Flow<Long?>,
+    deviceOnline: Flow<Boolean>,
     basemap: Flow<Basemap>,
+    val syncActivity: StateFlow<SyncActivity>,
     val offlineMap: StateFlow<OfflineMapState>,
     private val backendConnection: BackendConnectionManager,
     private val mapSourceSettings: MapSourceSettings,
@@ -87,19 +96,20 @@ class SettingsViewModel(
 ) : ViewModel() {
     private fun <T> Flow<T>.state(initial: T): StateFlow<T> = stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), initial)
 
-    val email = email.state(null)
     val session = session.state(null)
     val backendUrl = backendUrl.state("")
     val backendStatus: StateFlow<BackendStatus> = backendConnection.status
     val counts = repository.observeSyncCounts().state(SyncCounts())
+    val unsyncedScans = unsyncedScans.state(0)
     val lastSyncAt = lastSyncAt.state(null)
+    val deviceOnline = deviceOnline.state<Boolean?>(null)
     val basemap = basemap.state(resolveBasemap(MapSourceType.OFFLINE_PSAU, null, "Preparing offline map…"))
 
     fun refreshBackend() {
         viewModelScope.launch { backendConnection.refreshStatus() }
     }
 
-    /** Picks up the account role (admin tools) for sessions saved before roles existed. */
+    /** Fills in the account role for sessions saved before roles existed (shown under Account). */
     fun refreshProfile() {
         viewModelScope.launch { authRepository.refreshProfile() }
     }
@@ -125,15 +135,17 @@ class SettingsViewModel(
 }
 
 @Composable
-fun SettingsScreen(onSignedOut: () -> Unit, onSignInToSync: () -> Unit, onOpenClassifiers: () -> Unit) {
+fun SettingsScreen(onSignedOut: () -> Unit, onSignInToSync: () -> Unit, onOpenMap: () -> Unit) {
     val viewModel = geoViewModel { c, _ ->
         SettingsViewModel(
             repository = c.treeRepository,
-            email = c.sessionStore.session.map { it?.email },
+            unsyncedScans = c.leafAssessmentRepository.observeUnsyncedCount(),
             session = c.sessionStore.session,
             backendUrl = c.backendConfig.baseUrl,
             lastSyncAt = c.syncPreferences.lastSuccessfulSyncAt,
+            deviceOnline = c.networkMonitor.isConnected,
             basemap = c.basemap(),
+            syncActivity = c.syncStatusTracker.state,
             offlineMap = c.offlineMapInstaller.state,
             backendConnection = c.backendConnection,
             mapSourceSettings = c.mapSourceSettings,
@@ -142,15 +154,16 @@ fun SettingsScreen(onSignedOut: () -> Unit, onSignInToSync: () -> Unit, onOpenCl
             rescanMaps = c::rescanOfflineMaps,
         )
     }
-    val email by viewModel.email.collectAsStateWithLifecycle()
     val session by viewModel.session.collectAsStateWithLifecycle()
     val url by viewModel.backendUrl.collectAsStateWithLifecycle()
     val status by viewModel.backendStatus.collectAsStateWithLifecycle()
     val counts by viewModel.counts.collectAsStateWithLifecycle()
+    val unsyncedScans by viewModel.unsyncedScans.collectAsStateWithLifecycle()
     val lastSync by viewModel.lastSyncAt.collectAsStateWithLifecycle()
+    val online by viewModel.deviceOnline.collectAsStateWithLifecycle()
+    val activity by viewModel.syncActivity.collectAsStateWithLifecycle()
     val basemap by viewModel.basemap.collectAsStateWithLifecycle()
     val offlineMap by viewModel.offlineMap.collectAsStateWithLifecycle()
-    var showServer by remember { mutableStateOf(false) }
     var confirmSignOut by remember { mutableStateOf(false) }
 
     LifecycleResumeEffect(Unit) {
@@ -158,6 +171,10 @@ fun SettingsScreen(onSignedOut: () -> Unit, onSignInToSync: () -> Unit, onOpenCl
         viewModel.refreshProfile()
         onPauseOrDispose { }
     }
+
+    val current = session
+    val state = sessionState(current, System.currentTimeMillis())
+    val needsSignIn = authRequired(state, activity)
 
     Column(
         verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -170,36 +187,40 @@ fun SettingsScreen(onSignedOut: () -> Unit, onSignInToSync: () -> Unit, onOpenCl
     ) {
         Text("Settings", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
 
-        SettingsCard("Server") {
-            val label = status.display()
+        SettingsCard("Synchronization", tag = "settings_section_sync") {
+            val indicator = syncIndicator(counts, activity, needsSignIn)
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Backend", modifier = Modifier.weight(1f))
-                StatusPill(label.text, label.tone, Modifier.testTag("settings_backend_status"))
+                Text("Status", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                StatusPill(indicator.label, indicator.tone, Modifier.testTag("settings_sync_status"))
             }
-            Text(url, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium, modifier = Modifier.testTag("settings_backend_url"))
-            status.detail?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            val server = status.display()
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "Server · " + (url.toHttpUrlOrNull()?.host ?: url),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f).testTag("settings_server_host"),
+                )
+                StatusPill(server.text, server.tone, Modifier.testTag("settings_backend_status"))
+            }
+            KeyValue("Last successful sync", lastSync?.let { Formatters.dateTime(it) } ?: "Never on this device")
+            KeyValue("Trees waiting", "${counts.pending + counts.failed} (pending ${counts.pending}, failed ${counts.failed})")
+            KeyValue("Leaf scans waiting", unsyncedScans.toString())
             Text(
-                "Emulator: http://10.0.2.2:8000 · Phone: http://<laptop-LAN-IP>:8000 on the same Wi-Fi. The app cannot start Docker on your laptop; run run.bat there.",
+                syncDetailText(activity, online, needsSignIn),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.testTag("settings_sync_detail"),
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedButton(
-                    onClick = viewModel::refreshBackend,
-                    enabled = status.reachability != BackendReachability.CHECKING,
-                    modifier = Modifier.weight(1f).testTag("settings_test_connection"),
-                ) { Text("Test Connection") }
-                OutlinedButton(onClick = { showServer = true }, modifier = Modifier.weight(1f).testTag("settings_change_server")) { Text("Change Server") }
-            }
+            OutlinedButton(
+                onClick = viewModel::syncNow,
+                enabled = !activity.running,
+                modifier = Modifier.fillMaxWidth().testTag("settings_sync_now"),
+            ) { Text(if (activity.running) "Syncing…" else "Sync Now") }
         }
 
-        SettingsCard("Synchronization") {
-            KeyValue("Last successful sync", lastSync?.let { Formatters.dateTime(it) } ?: "Never on this device")
-            KeyValue("Waiting to sync", "${counts.pending + counts.failed} (pending ${counts.pending}, failed ${counts.failed})")
-            OutlinedButton(onClick = viewModel::syncNow, modifier = Modifier.fillMaxWidth().testTag("settings_sync_now")) { Text("Sync Now") }
-        }
-
-        SettingsCard("Map") {
+        SettingsCard("Map", tag = "settings_section_map") {
+            FilledTonalButton(onClick = onOpenMap, modifier = Modifier.fillMaxWidth().testTag("settings_open_map")) { Text("Open Map") }
             Text("Map source", style = MaterialTheme.typography.labelLarge)
             Column(Modifier.selectableGroup()) {
                 MapSourceOption(
@@ -221,6 +242,10 @@ fun SettingsScreen(onSignedOut: () -> Unit, onSignInToSync: () -> Unit, onOpenCl
             if (basemap.packageName != null && basemap.packageName != (offlineMap as? OfflineMapState.Ready)?.file?.name) {
                 Text(basemap.status, style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("basemap_status"))
             }
+            val guidance = NavigationConfig.Default
+            KeyValue("Field guidance", "Direct line to tree (not road routing)")
+            KeyValue("Arrival radius", String.format(Locale.US, "%.0f m", guidance.arrivalRadiusMeters))
+            KeyValue("Walking estimate pace", String.format(Locale.US, "%.1f km/h", guidance.walkingSpeedMps * 3.6))
             Text(
                 "Tree markers, GPS and field guidance work with or without a map. Map data © OpenStreetMap contributors (ODbL).",
                 style = MaterialTheme.typography.bodySmall,
@@ -229,31 +254,19 @@ fun SettingsScreen(onSignedOut: () -> Unit, onSignInToSync: () -> Unit, onOpenCl
             TextButton(onClick = viewModel::rescanOfflineMaps) { Text("Rescan for side-loaded map packages") }
         }
 
-        SettingsCard("Field guidance") {
-            val config = NavigationConfig.Default
-            KeyValue("Mode", "Direct line to tree (not road routing)")
-            KeyValue("Arrival radius", String.format(Locale.US, "%.0f m", config.arrivalRadiusMeters))
-            KeyValue("Walking estimate pace", String.format(Locale.US, "%.1f km/h", config.walkingSpeedMps * 3.6))
-        }
-
-        if (adminSectionVisible(session)) {
-            AdminSection(onOpenClassifiers = onOpenClassifiers)
-        }
-
-        SettingsCard("Account") {
-            KeyValue("Signed in as", email ?: "—")
-            val current = session
-            val expired = current?.isExpired(System.currentTimeMillis()) == true
+        SettingsCard("Account", tag = "settings_section_account") {
+            KeyValue("Signed in as", current?.email ?: "—")
+            current?.roleLabel?.let { KeyValue("Role", it) }
             KeyValue(
                 "Session",
                 when {
                     current == null -> "—"
-                    expired -> "Expired · sync paused"
+                    state == SessionState.EXPIRED -> "Expired · sync paused"
                     current.expiresAtMillis > 0 -> "Valid until ${Formatters.shortDateTime(current.expiresAtMillis)}"
                     else -> "Valid"
                 },
             )
-            if (expired) {
+            if (needsSignIn) {
                 Button(onClick = onSignInToSync, modifier = Modifier.fillMaxWidth().testTag("settings_signin_to_sync")) { Text("Sign In to Sync") }
             }
             Text(
@@ -262,18 +275,10 @@ fun SettingsScreen(onSignedOut: () -> Unit, onSignInToSync: () -> Unit, onOpenCl
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             OutlinedButton(onClick = { confirmSignOut = true }, modifier = Modifier.fillMaxWidth().testTag("settings_sign_out")) { Text("Sign Out") }
+            KeyValue("App version", BuildConfig.VERSION_NAME + if (BuildConfig.DEBUG) " (debug build)" else "")
         }
-
-        Text(
-            "GEO Tree ${BuildConfig.VERSION_NAME}" + if (BuildConfig.DEBUG) " · debug build" else "",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
     }
 
-    if (showServer) {
-        ServerSettingsDialog(onDismiss = { showServer = false }, onSaved = viewModel::syncNow)
-    }
     if (confirmSignOut) {
         AlertDialog(
             onDismissRequest = { confirmSignOut = false },
@@ -286,8 +291,8 @@ fun SettingsScreen(onSignedOut: () -> Unit, onSignInToSync: () -> Unit, onOpenCl
 }
 
 @Composable
-private fun SettingsCard(title: String, content: @Composable () -> Unit) {
-    OutlinedCard(Modifier.fillMaxWidth()) {
+private fun SettingsCard(title: String, tag: String, content: @Composable () -> Unit) {
+    OutlinedCard(Modifier.fillMaxWidth().testTag(tag)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text(title, style = MaterialTheme.typography.titleMedium)
             content()

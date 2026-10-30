@@ -15,6 +15,7 @@ from app.routes import (
     admin_assessments,
     admin_classifiers,
     admin_map,
+    admin_mobile,
     admin_overview,
     admin_trees,
     admin_users,
@@ -26,6 +27,7 @@ from app.routes import (
     trees,
     uploads,
 )
+from app.services import dataset_archive
 from app.services.seed import seed_dev_admin
 from app.web import install_web
 
@@ -62,6 +64,7 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
         settings.tree_image_dir.mkdir(parents=True, exist_ok=True)
         ensure_indexes(db)
         seed_dev_admin(db, settings)
+        dataset_archive.fail_interrupted(db)
         app.state.db = db
         app.state.settings = settings
         app.state.ai = _create_ai_service(db, settings, feature_extractor) if settings.ai.enabled else None
@@ -88,6 +91,7 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
     app.include_router(admin_trees.router)
     app.include_router(admin_assessments.router)
     app.include_router(admin_map.router)
+    app.include_router(admin_mobile.router)
     # Last: the web administration's catch-all never shadows an API route.
     install_web(app, settings.web_dist_dir)
     return app

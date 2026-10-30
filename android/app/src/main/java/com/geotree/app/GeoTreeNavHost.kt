@@ -30,8 +30,6 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.navigation
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
-import com.geotree.app.feature.classifiers.ClassImagesScreen
-import com.geotree.app.feature.classifiers.ClassifiersScreen
 import com.geotree.app.feature.dashboard.DashboardScreen
 import com.geotree.app.feature.leafassessment.AssessmentDetailScreen
 import com.geotree.app.feature.leafassessment.LeafAssessmentScreen
@@ -69,11 +67,6 @@ private object Routes {
 
     /** One-shot request on the Tree Detail entry: scroll to its history (from "View History"). */
     const val SCROLL_TO_HISTORY_KEY = "scroll_to_history"
-
-    /** Admin → Classifiers (entered from Settings; shown only to the ADMIN role). */
-    const val CLASSIFIERS = "admin/classifiers"
-    const val CLASS_IMAGES = "admin/classifiers/{classId}"
-    fun classImages(classId: String) = "admin/classifiers/$classId"
 
     /** One-shot requests for the Map, stored on the MAIN graph entry (always on the back stack while signed in). */
     const val FOCUS_TREE_KEY = "focus_tree_id"
@@ -146,7 +139,6 @@ fun GeoTreeNavHost(modifier: Modifier = Modifier) {
                         onOpenMap = { navController.navigateToTab(Routes.MAP) },
                         onOpenTree = { id -> navController.navigate(Routes.treeDetail(id)) },
                         onSignInToSync = { navController.navigate(Routes.REAUTH) },
-                        onOpenClassifiers = { navController.navigate(Routes.CLASSIFIERS) },
                     )
                 }
                 composable(Routes.MAP) { entry ->
@@ -168,7 +160,7 @@ fun GeoTreeNavHost(modifier: Modifier = Modifier) {
                     SettingsScreen(
                         onSignedOut = { navController.navigate(Routes.LOGIN) { popUpTo(Routes.MAIN) { inclusive = true } } },
                         onSignInToSync = { navController.navigate(Routes.REAUTH) },
-                        onOpenClassifiers = { navController.navigate(Routes.CLASSIFIERS) },
+                        onOpenMap = { navController.navigateToTab(Routes.MAP) },
                     )
                 }
             }
@@ -241,15 +233,6 @@ fun GeoTreeNavHost(modifier: Modifier = Modifier) {
                         }
                     },
                 )
-            }
-            composable(Routes.CLASSIFIERS) {
-                ClassifiersScreen(
-                    onBack = { navController.popBackStack() },
-                    onOpenClass = { classId -> navController.navigate(Routes.classImages(classId)) },
-                )
-            }
-            composable(Routes.CLASS_IMAGES, arguments = listOf(navArgument("classId") { type = NavType.StringType })) { entry ->
-                ClassImagesScreen(classId = requireNotNull(entry.arguments?.getString("classId")), onBack = { navController.popBackStack() })
             }
         }
     }

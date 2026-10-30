@@ -93,6 +93,10 @@ interface LeafAssessmentDao {
     )
     suspend fun getUnsynced(): List<LeafAssessmentEntity>
 
+    /** Scans not on the server yet (including ones still being assessed), for the Settings sync summary. */
+    @Query("SELECT COUNT(*) FROM leaf_assessments WHERE syncStatus != 'SYNCED'")
+    fun observeUnsyncedCount(): Flow<Int>
+
     /** Fails if the id exists: a new scan never replaces an earlier one. */
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insert(assessment: LeafAssessmentEntity)

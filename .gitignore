@@ -27,6 +27,7 @@ build/
 captures/
 *.apk
 *.apk.sha256
+/geotree-*.zip
 *.aab
 *.iml
 .idea/

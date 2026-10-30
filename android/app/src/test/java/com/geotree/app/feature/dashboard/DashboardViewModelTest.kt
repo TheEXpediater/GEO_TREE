@@ -227,13 +227,14 @@ class DashboardViewModelTest {
     }
 
     @Test
-    fun `administrators get the admin shortcut on the dashboard and field testers do not`() = runTest {
+    fun `the mobile dashboard is the same for every role (administration lives on the web)`() = runTest {
         val valid = 1_790_000_000_000L + 86_400_000L
-        for ((role, expected) in listOf("ADMIN" to true, "SUPER_ADMIN" to true, "FIELD_TESTER" to false, null to false)) {
+        val states = listOf("ADMIN", "SUPER_ADMIN", "FIELD_TESTER", null).map { role ->
             val vm = viewModel(session = Session("t", "someone@example.com", valid, role = role))
             advanceUntilIdle()
-            assertEquals("role $role", expected, vm.state.value.isAdmin)
+            vm.state.value
         }
+        assertTrue(states.all { it == states.first() })
     }
 
     @Test

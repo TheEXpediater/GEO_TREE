@@ -11,10 +11,11 @@ import kotlinx.coroutines.flow.map
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 /**
- * The single source of truth for the backend address. The default comes from BuildConfig
- * (the local Docker backend at http://10.0.2.2:8000 unless overridden with -Pgeotree.baseUrl,
- * e.g. for an explicit hosted test build); a user-verified override (e.g. a laptop on the LAN)
- * is stored in DataStore. Repositories never see the address directly.
+ * The single source of truth for the backend address. The default comes from BuildConfig: the
+ * Render API (https://geo-tree.onrender.com) in release builds, the local Docker backend at
+ * http://10.0.2.2:8000 in debug builds (either overridable with -Pgeotree.baseUrl). A
+ * user-verified override from the login screen (e.g. a laptop on the LAN) is stored in DataStore.
+ * Repositories never see the address directly.
  */
 class BackendConfig(
     private val dataStore: DataStore<Preferences>,
@@ -57,7 +58,30 @@ class BackendConfig(
         return removed
     }
 
+    /**
+     * Removes a saved server on a retired host (the former VPS, offline since 2026-10-19), so the
+     * build default (the Render API in client builds) applies again. Settings no longer offers a
+     * server editor, so without this an upgraded phone could stay pointed at a dead address.
+     * Only the server address changes. Returns true when an override was removed.
+     */
+    suspend fun forgetRetiredServer(): Boolean {
+        var removed = false
+        dataStore.edit { prefs ->
+            val stored = prefs[BASE_URL] ?: return@edit
+            if (isRetiredServer(stored)) {
+                prefs.remove(BASE_URL)
+                removed = true
+            }
+        }
+        return removed
+    }
+
     companion object {
+        /** Hosts that no longer serve GEO Tree. */
+        val RETIRED_HOSTS = setOf("geotree.museuma7k9x3.tech")
+
+        fun isRetiredServer(url: String): Boolean = url.toHttpUrlOrNull()?.host?.lowercase() in RETIRED_HOSTS
+
         private val BASE_URL = stringPreferencesKey("backend_base_url")
         private val HOSTED_MIGRATION_DONE = booleanPreferencesKey("backend_hosted_migration_v1")
         private val IPV4 = Regex("""^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$""")

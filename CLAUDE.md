@@ -1,36 +1,317 @@
-# GEO Tree — Project Engineering Charter
+# GEO Tree Engineering Charter
 
-## 1. Mission and Current Direction
+## 0. Current override (2026-10-24, later the same day): production is Render + MongoDB Atlas
 
-GEO Tree is an offline-first Android field-management and tamarind-leaf assessment system. It is evolving into two coordinated clients sharing one backend:
+**This section wins over every Hostinger statement below (Sections 1-11 and the Hostinger parts of Section 12).** Hostinger has expired and the VPS is unreachable: do not renew, access, back up or deploy to it. The owner's checklist for this state is the "Restore Render + MongoDB Atlas" prompt of 2026-10-24.
 
-1. **Web Administration Platform** for users, field data review, tags/metadata, image management, classifier datasets, DINOv2 model status, analytics, and administrative CRUD.
-2. **Android Field Tester Application** for authentication, registering/geotagging trees, field data collection, image capture, leaf assessments, and viewing a tree's assessment history.
-
-The Android application is not being replaced. Its administrative responsibilities will be moved to the web in a staged migration, while its field workflows remain reliable and offline-capable.
-
-Treat this repository as the source of truth for GEO Tree. Do not conflate it with the separate Museum App repository.
-
-### Known local repository paths
-
-- GEO Tree: `C:\CAPSTONE.2`
-- Existing Museum App: `C:\Capstone\Museum_App`
-
-Verify these paths before acting. Do not assume the current working directory is correct.
-
-### Existing hosted environment
-
-The existing Museum App uses the domain `museuma7k9x3.tech` and its API at `api.museuma7k9x3.tech`. The prior local audit reported a Hostinger VPS, Caddy reverse proxy, a Docker Compose project named `museum_app_prod`, source/deployment files under `/opt/museum-app/`, and approximately 8 GB RAM. These are **previously reported facts, not proof of the live server's current state**. Re-inspect the live VPS read-only before a production change.
-
-A prior audit also reported that the Museum's TripoSR workload reached approximately 7.7 GB RAM at peak. Treat shared memory as a serious risk. Do not stop, disable, reconfigure, or alter Museum TripoSR or other Museum resources without explicit approval for that exact action.
+- **Production API:** the existing Render service `https://geo-tree.onrender.com` (verified 2026-10-24: `/api/v1/health` -> `database: ok`, `ai: disabled`, ~32 s cold start). Lightweight FastAPI only (`render.yaml`); secrets (`MONGO_URI`, `JWT_SECRET`) live in the Render dashboard, never in Git, the APK or the web build.
+- **Data:** MongoDB Atlas (structured records only), reached only through FastAPI. Never reset Atlas or delete accounts/trees/assessments.
+- **Local Docker:** development, DINOv2 features, training, ONNX export, full tests, and the web admin with real AI data.
+- **Android:** release builds default to the Render URL; debug builds to `http://10.0.2.2:8000`. `verifyReleaseBaseUrl` rejects local/LAN, non-HTTPS and retired Hostinger hosts. Leaf inference stays on-device from the bundled DINOv2 ViT-S/14 + head (classes Healthy, Spotting, Powdery Mildew).
+- **No durable files on Render:** no photo bytes (`IMAGE_STORAGE=disabled`), no dataset archives (`DATASET_ARCHIVE_DIR` is ignored while `RENDER=true` unless `DATASET_ARCHIVE_PERSISTENT=true` marks a real persistent disk), no APK (`DISTRIBUTION_DIR` unset, so `/download` answers 404). Hosting the APK needs a separately approved durable location (e.g. GitHub Releases, object storage or a Render disk).
+- **QR:** the existing QR encodes `https://geotree.museuma7k9x3.tech/download` (dead VPS; domain on Hostinger `dns-parking` nameservers). It works again only if the owner keeps that domain and points it at a verified download route. Do not generate a replacement QR until a new download URL serves the correct signed APK; keep the old QR image.
+- **Mobile Settings** (web `/mobile`, API `/api/v1/admin/mobile/*`) is kept: it works fully on local Docker; on Render it shows release/download/archives as not available until those storage decisions are made. The web admin is not part of the Render build (`backend/web_dist` is gitignored).
+- Do not commit, push or deploy without separate authorization. Museum isolation rules (Appendix A.14) remain mandatory.
 
 ---
 
-## 2. Stable Baseline — Preserve These Features
+## Superseded for hosting: owner's Hostinger charter (2026-10-24, earlier)
+
+**Revision:** 2026-10-24  
+**Production direction:** Hostinger VPS for GEO Tree  
+**Repository:** `C:\CAPSTONE.2` (verify before acting)
+
+This charter supersedes earlier GEO Tree instructions that selected Render + MongoDB Atlas as the production target or prohibited reconnecting to Hostinger. The user has now explicitly authorized returning GEO Tree to its existing Hostinger VPS. Preserve the stable architecture, testing, data safety, and Museum-isolation rules from earlier project documentation unless this charter expressly updates them.
+
+## 1. Mission and scope
+
+GEO Tree is an offline-first Android field-management and tamarind-leaf assessment system with a web administration platform. The requested direction is to:
+
+1. Return GEO Tree's production online services to the existing Hostinger VPS.
+2. Make the Android release use the verified Hostinger HTTPS API for online authentication and synchronization while retaining offline-first field workflows and local on-device leaf inference.
+3. Transfer and verify the current classifier dataset archive on Hostinger, then support safe administrator uploads of future dataset archives.
+4. Add **Mobile Settings** to the web admin menu for APK release/version history, a stable app-download QR code, and an accurate AI model/dataset profile.
+5. Build, sign, test, package, publish, and verify the new Android APK at the download target referenced by the existing QR code, preserving that QR's URL whenever technically possible.
+6. Preserve existing tree, user, assessment, image, map, and model data. Do not fabricate metrics or claim unperformed tests.
+
+Do not treat this as permission to rewrite the architecture or delete older cloud resources. Make the smallest safe changes that achieve the direction above.
+
+## 2. Hosting target and cutover authority
+
+### 2.1 Hostinger is the intended GEO Tree production target
+
+The historical candidate production URL is `https://geotree.museuma7k9x.tech/`. Verify current DNS, TLS, route behavior, and live health before using it as the APK base URL. Do not assume a historical URL, IP, port, container name, path, or service is still accurate without inspection.
+
+Historical GEO Tree VPS identifiers include `/opt/geotree`, `geo-tree-api`, `geo-tree-mongodb`, and related GEO Tree volumes. Treat these only as discovery hints. Inspect the actual VPS and compose configuration before running commands or modifying resources.
+
+The intended production responsibilities on Hostinger are:
+
+- GEO Tree FastAPI API and web administration service(s) already present in the deployment.
+- GEO Tree's production MongoDB and structured account/tree/assessment metadata.
+- Persistent GEO Tree tree images, assessment images, classifier training images, archive files, model artifacts, and APK release files as supported by the existing deployment.
+- The stable public download endpoint consumed by the existing QR code.
+- Dataset validation/import and, only after resource checks, controlled DINOv2 feature extraction and classifier-head training.
+
+The Android app must not connect directly to MongoDB or any private service. It must use the public HTTPS API.
+
+### 2.2 Safe migration and source-of-truth rules
+
+Before switching clients or deploying:
+
+1. Inventory the active Hostinger API, database, persistent volumes, uploads, model artifacts, dataset metadata, current APK, web admin, and QR/download target.
+2. Determine where the latest authoritative records currently live. Compare available Hostinger data with any still-existing Render/Atlas data using counts, IDs, timestamps, and hashes where appropriate. Do not assume either environment is complete.
+3. Back up the actual GEO Tree database with a restore-tested dump where feasible, plus relevant persistent data, classifier files/artifacts, configuration, APK, and QR/download target. Record paths, timestamps, sizes, and SHA-256 hashes. Keep the backup outside directories that a deploy might overwrite.
+4. Do not blindly restore a dump over a live database. Do not reset/drop collections, replace user IDs/password hashes, or overwrite newer records. If data needs merging, make a reversible, documented plan and preserve IDs and idempotency keys.
+5. Switch the Android production URL only after the Hostinger HTTPS API and the relevant authentication/tree/sync endpoints pass smoke tests.
+6. Do not decommission, wipe, stop, or remove Render/Atlas resources as part of the cutover. Leave them untouched until Hostinger parity and successful operation are proven and a separate explicit authorization exists.
+
+### 2.3 Strict Museum isolation
+
+GEO Tree and the PSAU Agricultural Museum app are separate projects. Museum source, services, databases, Qdrant, uploads, models, containers, domains, Caddy routes, TLS, and data must remain untouched.
+
+The Hostinger VPS may be shared. Inspect resource ownership before operating anything. Do not run global Docker prune/cleanup commands, `docker compose down -v` in production, broad volume deletion, or commands that may stop other projects. If changing a shared reverse proxy, first back up and inspect the existing configuration, add only the GEO Tree change, validate the complete configuration, and reload only when safe. If safe isolation cannot be proven, stop and report the blocker.
+
+## 3. Stable product architecture
+
+### Android field application
+
+- Kotlin + Jetpack Compose.
+- ViewModel/StateFlow and repository pattern.
+- Room as the local source of truth.
+- WorkManager for queued/retryable synchronization.
+- FastAPI over HTTPS for online operations.
+- Existing authentication/session handling.
+- GPS tree registration, tree details, image capture/selection, field metadata, tags, navigation, and assessment history.
+- MapLibre and the existing offline MBTiles coverage for PSAU/Magalang.
+- Bundled ONNX model for leaf assessment, with inference executed on-device even when no network is available.
+- Existing assessment history remains append-only, newest-first, and keyed by unique assessment IDs.
+
+The desired mode is **online through Hostinger when connected, offline-capable when disconnected**. Do not disable offline-first behavior just because Hostinger is the production server. Local tree registration, GPS capture, saved photos, assessment history, offline maps, and on-device predictions must not require an API round trip. Sync should resume when connectivity returns and remain idempotent.
+
+### AI pipeline
+
+- Primary backbone: DINOv2 ViT-S/14, frozen for the current feature pipeline.
+- 384-dimensional features and a lightweight supervised classifier head, where confirmed by the actual artifacts.
+- Canonical classes: `Healthy`, `Spotting`, and `Powdery Mildew`.
+- Source label `Mold` was authorized to map to `Powdery Mildew` for the current dataset. Preserve the mapping as provenance and flag likely label contamination instead of describing it as scientifically confirmed.
+- Keep classifier training images, tree-registration images, and leaf-assessment images logically separate. Never promote a field assessment photo into the training set automatically.
+- Keep a prior working model active until a new model passes evaluation, export checks, and Android parity checks. Failed training must not break the active model.
+- Do not introduce Qdrant for GEO Tree or replace DINOv2 with OpenCV/OpenCLIP as the disease classifier.
+
+### Hosted processing capacity
+
+The user wants GEO Tree's online services and persistent data on Hostinger. Before enabling dataset extraction/training there, inspect actual RAM, CPU, disk capacity, Python/container compatibility, and current VPS utilization. Use a bounded queue with one training job at a time by default. Do not run repeated heavyweight jobs per image upload. If the VPS cannot safely run feature extraction/training, keep the archive and serving responsibilities on Hostinger and report the precise limitation before selecting any alternative. Do not silently shift production back to Render or another cloud.
+
+## 4. Dataset baseline, transfer, and future uploads
+
+### 4.1 Existing archive
+
+The expected archive is `data-sets.zip` in the repository root, but verify the actual path and archive before transfer. Previous inventory reported:
+
+- SHA-256: `82775506a025599e74ed5717ee09786f06446d90158d4c6e77ff36c3365239b7`
+- 184 image files: 91 JPG and 93 HEIC.
+- Three images excluded from the active split because of duplicate/conflicting content, leaving 181 eligible images.
+- Prior split report: 144 images in training + validation and 37 in the locked test set.
+- Prior split by class: training/validation Healthy 27, Spotting 31, Powdery Mildew 86; locked test Healthy 7, Spotting 8, Powdery Mildew 22.
+
+These are a **previously reported baseline, not proof of the current files**. Recalculate counts and hash from the actual archive/manifests. If the archive's hash differs, do not automatically reject it, but inventory and reconcile the difference before import. Never silently substitute another ZIP.
+
+### 4.2 Safe transfer and import
+
+- Back up the current active dataset, classifier metadata, feature cache, current model, and relevant database records before modifying active data.
+- Transfer the archive privately to a GEO Tree-only persistent directory on Hostinger. Verify its remote SHA-256 matches the local source. The raw archive must not be publicly downloadable or placed inside the APK or public Git repository.
+- Inventory every ZIP member, source folder, extension, size, image readability, duplicate hash, label, and path. Guard against path traversal, archive bombs, unsupported files, malformed images, and unrecognized labels.
+- Extract to a staging directory, not the active dataset. Validate labels and counts; provide an import preview and explicit commit/activate step for admin-controlled uploads.
+- Keep exact duplicates and conflicting-label cases in a review report; do not choose labels by guessing. Preserve source paths and original filenames as metadata.
+- Retain an import manifest with archive hash, image hashes, source folder/class, canonical class, validation status, duplicate family, split group, dimensions, and split assignment as applicable.
+- Only after validation and rollback proof should a new dataset version become active. Inactive/older dataset versions and rollback artifacts must remain recoverable.
+- Dataset upload must not remove or rewrite tree records, user accounts, tree images, assessment records/images, map assets, or unrelated files.
+- Enforce admin authorization, upload-size limits, image/content checks, safe file IDs, deduplication, job progress, error states, and audit metadata. Never trust client filenames as server paths.
+
+### 4.3 Honest model accuracy reporting
+
+A previous report stated:
+
+- Validation accuracy: 95.0% on 20 images.
+- Locked-test accuracy: 34/37 = 91.9%.
+- The locked test came from the same photo sessions as training and may be optimistic.
+- Cross-source folder evaluation fell to approximately 0.49–0.71 accuracy, with possible background confounding.
+
+Do not show “95% accuracy” without specifying the evaluation set and sample count. Re-open the current evaluation/manifests and use the metric matching the model/version being displayed. If the current release bundle cannot be linked to that evaluation, label the result as the previous reported evaluation or “not verified for this APK”. The admin page should show evaluation type, sample count, date/model version, and known limitations. Never invent or inflate metrics.
+
+## 5. Web admin: Mobile Settings / release management
+
+Add a clearly named **Mobile Settings** item to the existing authenticated admin menu using the current web stack and design system. Inspect existing routes/components before adding new ones. This is a web-admin feature; do not add mobile-only admin screens back to Android.
+
+The page should be backed by real persisted release/model/dataset metadata and server responses, not static mock values.
+
+### 5.1 Current APK profile
+
+Show, where verified:
+
+- Current/published app version name and version code.
+- Release status and release timestamp (do not invent the original release date).
+- APK filename, byte size, SHA-256, package/application ID, signing status/certificate fingerprint, and minimum supported Android version if available from the artifact.
+- A working public HTTPS download URL.
+- Release notes and compatibility notes.
+- The model bundle version/checksum included in that exact APK, if the build manifest permits it.
+
+The APK actually served by the download route must match the stored SHA-256 and the currently published release record. If not, flag an error and do not label it current.
+
+### 5.2 Version history starting now
+
+Persist a release record for each newly published version, including version name/code, creation/publish timestamp, APK size/hash, download route, release notes, model version and dataset version, and actor where audit logging exists.
+
+Begin trustworthy release tracking now. Do not fabricate historical releases or their dates. If the existing 0.8.1 APK is captured as the initial baseline, mark it as a baseline record with tracking-start timestamp and state that its original publication timestamp is unknown unless verified. Future releases should be listed newest-first with status (draft, published, superseded, failed, or rolled back, as appropriate).
+
+Protect release upload/publish/rollback actions with server-side admin authorization. Do not allow a normal Field Tester to publish an APK or edit model/dataset metadata.
+
+### 5.3 Existing QR code and stable download target
+
+- Locate the **actual current QR code** in the existing admin UI/assets/deployed page and decode its embedded destination. Do not guess the route or generate a random new URL.
+- Prefer preserving the exact existing QR image and encoded URL. If it points directly to a stable APK file path, replace that file at the same path only after backing it up. If it points to a stable download/landing endpoint, update the release behind that endpoint to the latest verified APK.
+- A QR code encoding an old direct-file URL cannot be changed just by replacing its image in the admin UI; the exact encoded URL must continue serving the updated APK or redirect safely to the new download. Maintain compatibility at the old URL when possible.
+- Show the QR in Mobile Settings with the exact decoded target, a copy-link action, and an “open/test download” link. Verify the QR decodes to the displayed URL and the downloaded bytes hash to the current APK record.
+- Do not expose private datasets, internal paths, signed credentials, or secret query parameters in the QR URL.
+
+### 5.4 AI model profile
+
+Display the model that is actually active and/or bundled in the current APK, clearly distinguishing those two states if they differ:
+
+- Backbone: DINOv2 ViT-S/14, only if confirmed from actual artifacts.
+- Classifier architecture/head and its version.
+- Number of classifier **classes**: expected 3, with names `Healthy`, `Spotting`, and `Powdery Mildew` after verification.
+- Current active server model version, bundled mobile model version, and checksums where available.
+- Inference location: on-device / offline for the released mobile bundle; training location/status separately.
+- Dataset version associated with the model.
+- Evaluation metrics with evaluation type, count, date, per-class metrics/confusion matrix when available, and limitations.
+
+Use terms precisely: there is one DINOv2-based classification pipeline/head with three classes, not “three DINOv2 models” unless the repository proves that architecture. Do not imply a new training dataset immediately updates models already embedded in existing APKs. A retrained model requires export/parity checks and a subsequent APK release unless the existing supported update mechanism is proven to safely deliver compatible head updates.
+
+### 5.5 Dataset profile and upload controls
+
+Show archive/dataset versions and reliable counts:
+
+- Archive filename/hash/size and import timestamp.
+- Total archive images, accepted active images, rejected/excluded files, exact duplicates, and unreadable/unknown-label counts.
+- Counts per canonical class, with training/validation/test counts separated from total class counts.
+- Split method/grouping, manifest link/download for authorized admins, import status, model-training status, and model version produced from the dataset.
+- Keep “archive files”, “active training dataset images”, “validation/test images”, and “field assessment images” as separate metrics.
+
+Provide authenticated admin upload for future dataset archives. Validate and stage first; show a review summary and require explicit confirmation before activation/retraining. Preserve rollback. Do not allow dataset upload to bypass validation or silently start multiple simultaneous training jobs.
+
+## 6. API, database, and security
+
+- Inspect existing API routes and schemas first; reuse current business logic and data structures where safe.
+- Keep JWT/session validation and server-side role checks. UI hiding is not authorization.
+- Use the existing password hashing and user IDs. Do not reset accounts or seed/change production users unless explicitly necessary and authorized.
+- Keep database URI, JWT secret, SSH credentials, signing keys, tokens, and passwords out of source control, APK assets, reports, and UI logs.
+- Add bounded pagination, upload validation, deterministic IDs, idempotency, structured errors, and audit events for release/dataset activation where supported.
+- Make schema migrations additive/backwards-compatible where practical. Back up before migrations and include rollback.
+- The APK must never contain MongoDB credentials or connect directly to the database.
+- Keep public access limited to the intended APK/download landing route and other intentionally public resources. Protect admin pages, dataset archives, training images, model-management routes, and user records.
+
+## 7. Android API configuration and release versioning
+
+- Production release should use the verified Hostinger HTTPS API URL, expected to be `https://geotree.museuma7k9x.tech` only after live verification.
+- Development configuration may retain `http://10.0.2.2:8000` for emulators, `http://localhost:8000` for host development, and an explicitly configured LAN address for physical-device development. Do not put personal LAN addresses in production builds.
+- Add/retain a build-time check that rejects local, private-LAN, or plain-HTTP production base URLs.
+- Inspect the current Gradle version and increment it. Historical current release is 0.8.1/versionCode 12, so use 0.8.2/versionCode 13 only if the actual checkout has not advanced. Never reuse a version code.
+- Preserve `com.geotree.app` and the established release signing certificate. Do not generate a new signing key or expose signing material. If credentials are unavailable, do not produce a fake “signed release”; report the blocker.
+- Build a signed, non-debuggable release APK and test upgrade installation over the existing signed version without uninstalling or clearing data.
+- Bundle the correct ONNX model, class order, preprocessing metadata, version/checksum and inference code; verify that the APK contains the expected assets.
+- Preserve local Room data and map assets. Offline assessment and map use must continue even if the VPS is unavailable.
+
+## 8. Required tests and deployment gates
+
+Run appropriate current-checkout tests, not historical counts alone.
+
+### Backend/database
+
+- Health, sign-in, protected endpoint, role authorization.
+- Tree create/read/sync with stable IDs and idempotency.
+- Assessment history create/read/sync and no duplicates.
+- Persistence after container/service restart.
+- Dataset archive validation, staging, deduplication, label mapping, import/rollback.
+- Dataset/AI model metadata and version registry.
+- APK publish/download permissions and correct bytes/hash.
+- Mobile Settings API authorization and real-data UI behavior.
+
+### Android
+
+- Release configuration points to Hostinger HTTPS.
+- Login/token handling and sync using a valid account only if authorized credentials are available.
+- Offline tree registration, GPS, photo persistence, map, local assessment, history, force-stop/restart.
+- Reconnection sync is idempotent and does not erase local data on failure.
+- ONNX prediction works in airplane mode on a stored test image.
+- App version/model metadata matches the release record.
+- Upgrade install, signature continuity, manifest/package/version, non-debuggable release.
+
+### Web and hosting
+
+- Production web build/tests.
+- Mobile Settings page with current release, release history, QR/download, model profile, dataset profile.
+- QR target is decoded and verified against the downloaded APK SHA-256.
+- Hostinger health/TLS and the real login/tree/sync endpoints.
+- Data and files persist after a controlled GEO Tree service restart.
+- Confirm only GEO Tree resources were modified. Do not touch Museum resources.
+
+Do not claim any test passed unless it ran. Label emulator-only and physical-device results accurately. A health endpoint alone is not proof that authentication or syncing works.
+
+## 9. Backups, deploy, and rollback
+
+Before touching production, back up:
+
+- GEO Tree MongoDB data using the existing supported backup method.
+- GEO Tree persistent uploads, classifier datasets, AI artifacts, releases, and relevant configuration.
+- Current APK and ZIP, current QR image/page/route, and current web/API deployment configuration.
+- Current CLAUDE.md and relevant repository changes if updating the charter.
+
+Verify backup readability and record hashes. Deploy only the GEO Tree service and web/API assets needed. Validate the exact GEO Tree compose project/service names and volumes before using them. Avoid global Docker cleanup or shared-service restarts. After deploy, test the existing QR URL and verify the served APK hash. Keep the old APK and previous model version available for rollback. If a release fails, restore the previous APK target and compatible service/config version without deleting new field data.
+
+Do not automatically commit or push to GitHub unless the user separately directs it. Never put `data-sets.zip`, extracted datasets, private photos, database dumps, `.env`, keys, keystores, or secrets in a public repository.
+
+## 10. Required deliverables
+
+When carrying out a release task, provide as applicable:
+
+- New signed APK named `geotree-<version>.apk` in `C:\CAPSTONE.2`.
+- ZIP named `geotree-<version>.zip` containing the APK only unless the user explicitly asks otherwise.
+- APK and ZIP byte sizes and SHA-256 hashes; verify the APK inside the ZIP hashes identically to the standalone APK.
+- Application ID, version name/code, signing certificate fingerprint, non-debuggable status, and bundled model asset/hash.
+- Verified Hostinger API URL and exact stable QR/download URL.
+- Dataset archive remote path, size/hash, accepted/excluded/class counts, manifest path, and rollback path.
+- Mobile Settings features, the source of each model/dataset metric, tests actually run, deployment status, and any unverified items.
+- A rollback procedure and any deployment blockers.
+
+Do not claim that an APK has been built, files transferred, a service deployed, a QR tested, or data migrated unless the operation actually succeeded and was verified.
+
+## 11. Definition of done
+
+The work is complete only when the Hostinger production target is verified; database and dataset backups are usable; the selected source data is preserved; the dataset archive has a matching local/remote checksum; the web admin displays real release/version/model/dataset information; the existing QR URL resolves to the newly verified APK; the new signed APK targets Hostinger online while preserving offline field operations and on-device inference; the app installs over the prior version; relevant tests pass; and the final report clearly states all untested items. Museum resources must remain untouched.
+
+## 12. Verification log (2026-10-24, measured from the development PC)
+
+These are measurements, not assumptions. Re-check before acting; update this log when they change.
+
+- `geotree.museuma7k9x.tech` (the candidate URL in Sections 2.1 and 7) **does not resolve in DNS**. The historically working host is `geotree.museuma7k9x3.tech` (note the `3`), A record `72.61.120.104`.
+- `72.61.120.104` answered no ping and no TCP connection on ports 22, 80 or 443 (all timed out). Hostinger is therefore **not verified**: no backup, transfer, deploy, QR test or Hostinger-targeted release can be performed until the VPS is reachable again.
+- **QR decoded:** `tools/distribution/release/geotree_download_qr.png` (gitignored; SHA-256 `c907008e…8904`) decodes to exactly `https://geotree.museuma7k9x3.tech/download`, a stable landing page whose APK is `/download/GEO_Tree.apk`. Keep that URL; publish new APKs behind it; do not regenerate the QR. `C:\Users\Admin\Downloads\museum_app_download_qr.png` (2026-09-23) predates GEO Tree hosting and belongs to the Museum App: do not use or modify it.
+- Last VPS state recovered read-only on 2026-10-20: `C:\GEO_TREE_RECOVERY\2026-10-20` (database dump, volumes, `/opt/geotree` minus secrets, distribution folder serving APK 0.7.0 sha `0d31a154…16c1`).
+- Android: `geotree.museuma7k9x3.tech` stays in `BackendConfig.RETIRED_HOSTS` (a saved VPS address is dropped at startup) and Gradle's `verifyReleaseBaseUrl` refuses it for releases; release builds default to Render (Section 0).
+- Model bundled in 0.8.x is **v3** (head `4ddbdc65…`, ONNX `58f899dc…`). Its own metrics: validation 93.1% (27/29, internal split) and locked test 91.9% (34/37, same photo sessions). The "95.0% on 20" figure in Section 4.3 belongs to the earlier hosted v1/v2 models and must not be shown for v3.
+
+---
+
+# Appendix A: Preserved engineering rules (from the 2026-10-20 charter)
+
+Carried over unchanged except for heading levels and removal of Render/Atlas hosting text. The full previous charter is backed up at `C:\GEO_TREE_RECOVERY\hostinger-restore-2026-10-24\backup_before\CLAUDE.md.charter-2026-10-20`. **Where this appendix and Sections 1–12 above conflict, Sections 1–12 win.** Section numbers keep the old numbering (A.n = old Section n).
+
+### A.2 Stable Baseline — Preserve These Features
 
 The following behavior is the stable baseline. Do not redesign, replace, or remove it merely for stylistic reasons, to introduce a newer framework, or to simplify the code.
 
-### Android and field operations
+#### Android and field operations
 
 - Kotlin and Jetpack Compose
 - Room local-first data storage
@@ -44,13 +325,13 @@ The following behavior is the stable baseline. Do not redesign, replace, or remo
 - Existing tree images and tree records
 - Offline access to already downloaded tree data and assessment history
 
-### AI and assessments
+#### AI and assessments
 
 - DINOv2 ViT-S/14 as the primary current visual backbone
 - Frozen backbone for current operation
 - Cached DINOv2 features for the training dataset
 - Lightweight supervised classifier head
-- Configurable classes/labels such as `Healthy`, `Spotting`, and `Mold`
+- Configurable classes/labels such as `Healthy`, `Spotting`, and `Powdery Mildew` (source `Mold` is migrated to `Powdery Mildew`)
 - Admin image CRUD for training datasets
 - Automatic, coalesced classifier-head rebuilding after dataset changes
 - Model-version records and safe activation/rollback
@@ -61,19 +342,17 @@ The following behavior is the stable baseline. Do not redesign, replace, or remo
 
 The current assessment-history implementation was reported to pass 92 backend tests and 228 Android tests. A manual emulator test recorded six scans as six unique assessment records, preserved history offline, confirmed newest-first ordering, and verified that repeated synchronization did not add duplicates. Re-run tests on the current checkout; do not treat historical test counts as a substitute for current verification.
 
-### Local development
+#### Local development
 
 - Root `compose.yaml` runs local GEO Tree services.
 - Emulator API default: `http://10.0.2.2:8000`.
 - Local host API: `http://localhost:8000`.
 - Physical phone: laptop LAN IP and backend port, after firewall/network validation.
 - Local Docker is an optional development environment, not a prerequisite for every test. It is needed only for work that requires the server's PyTorch/DINOv2 runtime (e.g. local training, `backend/scripts/export_mobile_model.py`).
-- The hosted deployment `https://geotree.museuma7k9x3.tech` is live (verified 2026-10-12: HTTPS health OK). Use it for non-destructive integration checks: health, authentication with an authorized account, role permissions, reading records/model status, and sync-contract compatibility. Do not create, modify, or delete production records for testing without a designated test resource or explicit approval, and do not run training or bulk inference against it.
+- Hosted target: see the Hostinger charter above (verify the host before use; never assume a historical URL is live).
 - Android tools: `adb` is not on PATH; use `<sdk.dir from local.properties>\platform-tools\adb.exe`. A physical-device claim requires a device listed as `device` by `adb devices -l`; the `Medium_Phone` emulator is for preliminary checks only.
 
----
-
-## 3. Engineering Principles
+### A.3 Engineering Principles
 
 1. **Inspect before editing.** Read `README.md`, `CLAUDE.md`, `CLAUDE1.md` if present, build files, API routes, database schemas, and tests.
 2. **Preserve before replacing.** Map current features, dependencies, users, data, and APIs before moving them.
@@ -91,52 +370,9 @@ The current assessment-history implementation was reported to pass 92 backend te
 14. Use the existing UI/design system and patterns when good; avoid unnecessary dependencies.
 15. Report remaining work and limits accurately.
 
----
+### A.5 Product Responsibility Split
 
-## 4. Target System Architecture
-
-```text
-                         GEO Tree Users
-                               |
-                 +-------------+--------------+
-                 |                            |
-          Web Administration           Android Field App
-          React + TypeScript           Kotlin + Compose
-                 |                            |
-                 +-------------+--------------+
-                               |
-                      HTTPS GEO Tree API
-                            FastAPI
-                               |
-                +--------------+---------------+
-                |              |               |
-              MongoDB     persistent files   private AI service
-                |          and model data      DINOv2
-                +--------------+---------------+
-                               |
-                        leaf assessment history
-```
-
-The browser and Android app use the same versioned API and authorization rules. The Android app must not call the AI service directly. The AI service and MongoDB remain private/internal, not public internet endpoints.
-
-### Preferred deployment shape
-
-Where confirmed compatible with the live Hostinger environment:
-
-- Existing Museum: remains in its existing project and resources.
-- GEO Tree: separate directory, Compose project, containers, database, volumes, network, environment file, and logs.
-- Existing Caddy: reused as the single public HTTPS reverse proxy with only an additive GEO Tree route.
-- One proposed GEO Tree hostname: `geotree.museuma7k9x3.tech`.
-- Proposed Android production API base: `https://geotree.museuma7k9x3.tech`.
-- Proposed stable download page: `https://geotree.museuma7k9x3.tech/download`.
-
-These hostnames are proposals until DNS, existing routes, TLS, and live server configuration are verified. Do not state that they are live before testing them.
-
----
-
-## 5. Product Responsibility Split
-
-### 5.1 Web Administration Platform
+#### 5.1 Web Administration Platform
 
 The web app is the primary administrative interface. It must use the existing FastAPI and MongoDB foundation rather than creating an independent database or bypassing current business logic.
 
@@ -155,9 +391,9 @@ Modules:
 - Activity/audit log where practical
 - Release/download page or route for the Android APK
 
-Do not confuse generic record tags with classifier classes. For example, `Healthy`, `Spotting`, and `Mold` are classifier labels; a tag such as `PSAU field`, `survey round 1`, or a tree-category label is a different concept unless the existing model explicitly defines it otherwise.
+Do not confuse generic record tags with classifier classes. For example, `Healthy`, `Spotting`, and `Powdery Mildew` are the current canonical classifier labels (the old source label `Mold` is mapped during the dataset migration); a tag such as `PSAU field`, `survey round 1`, or a tree-category label is a different concept unless the existing model explicitly defines it otherwise.
 
-### 5.2 Android Field Tester Application
+#### 5.2 Android Field Tester Application
 
 Keep Android focused on field operations:
 
@@ -177,9 +413,7 @@ Keep Android focused on field operations:
 
 Move administrative classifier CRUD and user administration into the web application. Do not remove leaf assessment, tree history, local-first field data, maps, navigation, or sync as part of that simplification.
 
----
-
-## 6. Web Technology and UX
+### A.6 Web Technology and UX
 
 Preferred starting point:
 
@@ -192,7 +426,7 @@ Preferred starting point:
 
 A static frontend is preferred for deployment simplicity and lower persistent server load. Evaluate existing code before committing to this stack. Do not introduce Next.js server rendering if a static app can meet the use case without extra server processes.
 
-### UX requirements
+#### UX requirements
 
 - Professional, restrained data-management UI
 - Desktop sidebar navigation
@@ -205,7 +439,7 @@ A static frontend is preferred for deployment simplicity and lower persistent se
 - Charts and counts must come from real API responses
 - Do not put secrets or authorization logic in frontend code
 
-### Dashboard data
+#### Dashboard data
 
 Use real values where data exists, including:
 
@@ -223,13 +457,11 @@ Use real values where data exists, including:
 
 If a metric is unavailable, omit it or label it as unavailable. Never substitute sample numbers in production.
 
----
-
-## 7. Authentication, Authorization, and Roles
+### A.7 Authentication, Authorization, and Roles
 
 Target roles:
 
-### Super Admin
+#### Super Admin
 
 - Full administrative permissions
 - Manage Admin accounts and Field Tester accounts
@@ -237,7 +469,7 @@ Target roles:
 - Access all management modules
 - Delete records where policy permits
 
-### Admin
+#### Admin
 
 - Manage tree data and associated metadata
 - Manage tags/categories where supported
@@ -247,7 +479,7 @@ Target roles:
 - View analytics
 - Cannot promote another user to Super Admin unless explicitly granted that permission
 
-### Field Tester
+#### Field Tester
 
 - Use the Android field workflows
 - Access only authorized field data and permitted uploads/assessment history
@@ -255,7 +487,7 @@ Target roles:
 
 Implement authorization on the FastAPI backend. Hiding a menu or route in React is not authorization.
 
-### Migration compatibility
+#### Migration compatibility
 
 - Inspect the current user schema and JWT claims first.
 - Preserve current user IDs and password hashes.
@@ -267,9 +499,7 @@ Implement authorization on the FastAPI backend. Hiding a menu or route in React 
 - Use short, structured 401/403 responses without leaking sensitive details.
 - Audit high-impact role changes and destructive administrative operations.
 
----
-
-## 8. Backend and API Rules
+### A.8 Backend and API Rules
 
 Stack:
 
@@ -313,9 +543,7 @@ Backend responsibilities:
 
 Never expose MongoDB, the AI service, model files, or server filesystem directly.
 
----
-
-## 9. Data Model and Storage Separation
+### A.9 Data Model and Storage Separation
 
 Inspect real MongoDB documents and current collections before making schema changes. Do not assume that an example schema matches production data.
 
@@ -333,7 +561,7 @@ Likely GEO Tree collections include:
 
 Use existing names if already established. Do not duplicate collections just to match this list.
 
-### Three separate image domains
+#### Three separate image domains
 
 1. **Tree-registration images:** image evidence attached to a tree record.
 2. **Classifier training images:** admin-managed labeled examples for the DINOv2 classifier.
@@ -359,7 +587,7 @@ ai_data/
 
 Use dedicated persistent volumes for upload and AI data. MongoDB stores metadata, references, labels, statuses, timestamps, and metrics; do not store large image binaries/model weights in MongoDB by default.
 
-### Upload requirements
+#### Upload requirements
 
 - Validate actual file content, not only extension or client MIME type.
 - Support common image formats that the implementation can decode.
@@ -370,9 +598,7 @@ Use dedicated persistent volumes for upload and AI data. MongoDB stores metadata
 - Store files under generated IDs and known category directories.
 - Do not serve the entire uploads directory publicly. Serve assets through authenticated routes or short-lived access mechanisms where needed.
 
----
-
-## 10. DINOv2 AI Requirements
+### A.10 DINOv2 AI Requirements
 
 Current primary model: **DINOv2 ViT-S/14**.
 
@@ -392,7 +618,7 @@ condition label + confidence + model version
 
 Do not replace the primary model during the web/admin migration. Do not add Qdrant for GEO Tree. OpenCLIP may remain optional supporting infrastructure but is not required for DINOv2 inference.
 
-### Training pipeline
+#### Training pipeline
 
 When an Admin uploads classifier training images:
 
@@ -410,7 +636,7 @@ When an Admin uploads classifier training images:
 
 Do not fine-tune the 21M-parameter backbone for each upload. Do not rerun feature extraction on every historical image unnecessarily. Do not run one training process per uploaded file.
 
-### Model metadata
+#### Model metadata
 
 Keep a versioned record of:
 
@@ -427,15 +653,13 @@ Keep a versioned record of:
 
 An assessment must preserve the exact class, confidence, model name/version, and timestamps used at that time. Later model updates must not rewrite old assessment predictions.
 
-### Honest evaluation
+#### Honest evaluation
 
 Report dataset size by class, independent test size, accuracy, precision, recall, macro F1, and a confusion matrix when enough labeled test data exists. Avoid random train/test splits that put near-identical burst/session photos on both sides. Prefer tree/session-grouped separation for independent evaluation.
 
 Do not claim accuracy based on training metrics alone.
 
----
-
-## 11. Leaf Assessment History
+### A.11 Leaf Assessment History
 
 Every attempted/completed leaf scan is a distinct historical event with a unique `assessmentId`.
 
@@ -455,7 +679,7 @@ Tree Detail
 
 A new assessment never overwrites an older assessment. Retrying a failed attempt creates a new record and leaves the original failed attempt visible.
 
-### Storage
+#### Storage
 
 - Android Room has a dedicated assessment table/entity indexed by `treeId`, timestamp, and status where appropriate.
 - MongoDB has a dedicated `leaf_assessments` collection.
@@ -488,7 +712,7 @@ assessmentId
 
 Use consistent naming conventions in actual Kotlin/Pydantic models.
 
-### Sync
+#### Sync
 
 - Save the attempt locally before remote work where current flow supports it.
 - Synchronize by unique `assessmentId`.
@@ -497,11 +721,9 @@ Use consistent naming conventions in actual Kotlin/Pydantic models.
 - Offline history remains accessible.
 - Never invent an AI result if the server/model is unavailable.
 
----
+### A.12 Dataset Quality and Admin Classifier UX
 
-## 12. Dataset Quality and Admin Classifier UX
-
-Classifier classes are labels, not separate DINOv2 models. Initial examples are `Healthy`, `Spotting`, and `Mold`, but classes should remain configurable.
+Classifier classes are labels, not separate DINOv2 models. The current canonical names for this migration are `Healthy`, `Spotting`, and `Powdery Mildew`; the source folder label `Mold` maps to `Powdery Mildew` for this new dataset. Keep class handling configurable where the existing architecture supports it.
 
 Each class supports create/rename/delete with duplicate/blank validation and confirmation for deletion. Each class has a Manage Images page with previews, upload, multi-upload, selection, single/multi-delete, progress, empty/error states, content-hash duplicate handling, and model rebuild status.
 
@@ -523,9 +745,7 @@ Data quality rules:
 - include real field lighting, trees, distances, angles, and symptom severity
 - never auto-promote field assessment photos to training data
 
----
-
-## 13. Android Simplification Rules
+### A.13 Android Simplification Rules
 
 Before removing an Android administration screen, verify that the equivalent web feature exists, is authorized, and has passed API/UI tests.
 
@@ -550,182 +770,28 @@ Move administrative operations to web only after parity has been proved:
 
 Do not delete a feature just because it is inconvenient to move. Document a feature matrix with `Keep in Android`, `Move to Web`, `Shared`, or `Remove only with approval` before changing Android navigation.
 
----
+### A.14 Museum Isolation (protected resources)
 
-## 14. Hostinger Migration and Museum Isolation
+#### Protected Museum resources
 
-### Protected resources
+The separate Museum App is protected and outside the scope of this task. Known local source: `C:\Capstone\Museum_App`. Historical hosted roots included `/opt/museum-app/` and a Compose project named `museum_app_prod`; exact live details are not relevant to this migration.
 
-The existing Museum App is protected production infrastructure. Previously reported details include:
+Never:
 
-- local source: `C:\Capstone\Museum_App`
-- hosted root: `/opt/museum-app/`
-- deployment directory: `/opt/museum-app/deploy`
-- Compose project: `museum_app_prod`
-- Museum API: `api.museuma7k9x3.tech`
-- Caddy container reported as `museum-guide-caddy-prod`
-- Museum backend, MongoDB, Qdrant, uploads, OpenCLIP storage, TripoSR worker/jobs/cache
+- deploy GEO Tree inside the Museum directory;
+- overwrite Museum source/deployment files;
+- inspect or operate Museum containers, MongoDB, Qdrant, uploads, OpenCLIP storage, TripoSR jobs/caches, or volumes;
+- change Museum domains, routes, DNS, Caddy, TLS, or service configuration;
+- stop/restart/rebuild a Museum service or run Museum deployment scripts;
+- run global Docker prune/cleanup or broad resource deletion commands.
 
-Verify the actual live names read-only; do not assume all names/configurations are still current.
+Keep local GEO Tree Compose services and volumes separate from Museum resources. If any local Docker resource or path ownership is ambiguous, do not modify it. Do not change anything merely to make a cleanup easier.
 
-**Never**:
-
-- deploy GEO Tree inside `/opt/museum-app/`
-- overwrite Museum source or deployment files
-- reuse Museum MongoDB/Qdrant databases, volumes, credentials, uploads, or model caches
-- stop/restart/rebuild Museum containers as part of GEO Tree deployment
-- run Museum deployment scripts
-- change the existing `api.museuma7k9x3.tech` route
-- run global Docker prune/cleanup
-- modify/disable TripoSR without separate explicit approval
-
-### GEO Tree isolation
-
-Preferred directory:
-
-```text
-/opt/geotree/
-  deploy/
-  backend/ and/or app source
-  web/ build artifacts as required
-```
-
-Use a separate Compose project and resources with unique names, for example:
-
-```text
-project: geo_tree_prod
-containers: geo-tree-api, geo-tree-ai, geo-tree-mongodb, geo-tree-web (if a static web container is used)
-network: geo-tree-network
-volumes: geo_tree_mongodb_data, geo_tree_uploads, geo_tree_ai_data
-```
-
-These names are suggestions. Check conflicts first. MongoDB must be internal-only. AI must be private/internal-only. Only the API and/or static web entry should be reachable through Caddy.
-
-A dedicated GEO Tree network must not be used by Museum services except for the minimum proxy connectivity needed by the existing Caddy. If Caddy needs network attachment, inspect the live topology and choose the lowest-risk additive method. Do not recreate the Museum Compose stack just to attach GEO Tree.
-
-### Caddy/DNS/TLS
-
-The existing Caddy instance owns public ports 80/443. Do not launch another proxy on those ports.
-
-Potential hostname:
-
-```text
-geotree.museuma7k9x3.tech
-```
-
-Potential layout:
-
-- `https://geotree.museuma7k9x3.tech/` → web admin static frontend
-- `https://geotree.museuma7k9x3.tech/api/v1/...` → GEO Tree FastAPI
-- `https://geotree.museuma7k9x3.tech/download` → stable download page
-- the private AI service is never routed publicly
-
-This is only a target until live config, DNS, and TLS are verified. Keep `api.museuma7k9x3.tech` for the Museum. Add GEO Tree routing additively; back up the active Caddy configuration, validate syntax, make the smallest route-only change, and reload rather than restarting the Museum stack if the current Caddy deployment supports a safe reload. Check Museum health before and after. If a safe reload/route change cannot be established, stop and report the blocker.
-
-SSH access does not imply DNS-panel/API access. If DNS cannot be safely edited from the available environment, provide the exact required DNS record and do not claim it is live.
-
-### Host resource policy
-
-The VPS has been reported at roughly 8 GB RAM. A Museum TripoSR workload previously reached roughly 7.7 GB at peak. Re-check actual current resource usage before AI enablement.
-
-- Do not infer current spare memory from total RAM.
-- Do not launch DINOv2 training during a heavy Museum job unless safe coexistence has been demonstrated.
-- Keep a single AI model process where practical; avoid multiple Uvicorn workers duplicating model memory.
-- Permit only one classifier training job at a time.
-- Check memory/disk before training and uploads.
-- If insufficient resources are available, do not risk the Museum. Keep training disabled/deferred and report the required choice: local training + hosted inference, an idle-time guarded job, or a separate AI host.
-- Do not disable the Museum's 3D capability automatically just because it is less frequently used.
-
-### Production data persistence
-
-Persistent storage must cover:
-
-- GEO Tree MongoDB data
-- tree-registration images
-- leaf-assessment images
-- classifier training images
-- cached DINOv2 features
-- model versions/artifacts
-- job metadata/logs needed for diagnostics
-
-Use named volumes or another verified persistent Hostinger path. Do not rely only on writable container layers. Verify persistence after a GEO Tree-only container restart/recreation and, when feasible, a VPS reboot. Never delete data volumes during routine deploys.
-
-### Deployment phases
-
-1. Local read-only audit and tests.
-2. Local web/API integration and tests.
-3. Hostinger read-only preflight.
-4. Backup GEO Tree deployment assets and the active Caddy configuration before a route change.
-5. Create only GEO Tree directories, Compose resources, volumes, and network.
-6. Deploy and verify GEO Tree API/web/DB health.
-7. Add the minimal Caddy route and verify TLS/host routing.
-8. Verify Museum health and containers again.
-9. Verify persistent uploads, model artifacts, assessment history, and sync.
-10. Publish an APK only after the production API URL works.
-
-If any step threatens Museum availability or data, stop before that step and report the reason.
-
----
-
-## 15. Stable APK Download and QR Code
-
-The existing QR must not be regenerated as part of this migration.
-
-First locate the actual QR asset/link and decode/verify its current destination. Do not assume that a proposed URL is already encoded by it.
-
-- If the current QR points to a stable URL, preserve that exact URL and make that route serve the current GEO Tree APK.
-- If it points to a version-specific APK path, preserve the encoded URL and create a safe compatibility/alias route to the latest release where possible.
-- If no QR asset or destination can be found, stop and report this. Do not pretend a new target preserves the old QR.
-
-Proposed new stable URL, **only if consistent with the existing QR or explicitly approved by the user**:
-
-```text
-https://geotree.museuma7k9x3.tech/download
-```
-
-The URL must resolve to a download page that always links to the current APK. Versioned APK filenames may change behind that page; the QR URL must not contain a version number. Do not change the QR for each release.
-
-Important distinction:
-
-- The QR encodes a URL.
-- The APK SHA-256 checksum verifies a particular APK file.
-- A new APK normally has a new SHA-256 checksum; this does not require changing the QR.
-
-Keep GEO Tree release files separate from the Museum APK/distribution directory. Show the current app version, release notes, APK download, SHA-256 checksum, and minimum Android version where known. Verify the actual download in a browser/HTTP client before reporting success.
-
----
-
-## 16. Local Development Defaults and Environment Configuration
-
-Android emulator:
-
-```text
-http://10.0.2.2:8000
-```
-
-Local host:
-
-```text
-http://localhost:8000
-```
-
-Production candidate:
-
-```text
-https://geotree.museuma7k9x3.tech
-```
-
-Do not hardcode personal LAN IPs. Keep development/production base URL configurable using the repository's existing Gradle/build configuration and server-settings flow. Before saving a manual URL, confirm the GEO Tree health endpoint. Release builds should use HTTPS.
-
-Keep local Docker support and tests functional after adding hosted configuration.
-
----
-
-## 17. Testing Standards
+### A.17 Testing Standards
 
 Run and report actual command results. Re-run the current suites before and after significant refactors.
 
-### Backend
+#### Backend
 
 - authentication and roles
 - legacy user migration compatibility
@@ -746,7 +812,7 @@ Run and report actual command results. Re-run the current suites before and afte
 - analytics use real data
 - web route/API contracts
 
-### Android
+#### Android
 
 - existing geotagging/map/navigation/offline tests
 - login/session handling by role
@@ -758,7 +824,7 @@ Run and report actual command results. Re-run the current suites before and afte
 - Room migrations
 - release base URL configuration
 
-### Web
+#### Web
 
 - production build
 - login/logout
@@ -772,7 +838,7 @@ Run and report actual command results. Re-run the current suites before and afte
 - error/loading/empty states
 - responsive layout and basic accessibility
 
-### Deployment smoke test
+#### Deployment smoke test
 
 - health endpoint over HTTPS
 - login and authenticated endpoint
@@ -787,62 +853,7 @@ Run and report actual command results. Re-run the current suites before and afte
 
 Do not start expensive training or TripoSR simply to test resource limits.
 
----
-
-## 18. Definition of Done
-
-### Web administration
-
-- responsive and accessible
-- authenticated and server-authorized by roles
-- real dashboard metrics
-- tree/image/tag metadata management based on actual schemas
-- account/role management with safe migration
-- classifier class and training-image CRUD
-- model/job/version status and controls
-- assessment history review
-- no sample data presented as production data
-
-### Android field app
-
-- administrative features are moved only after web parity is verified
-- existing geotagging/map/navigation/offline behavior remains intact
-- field image and tagging workflow works
-- leaf assessment remains available
-- result and per-tree assessment history work
-- offline history survives backend outages
-- APK builds and uses the appropriate configured API URL
-
-### AI/data
-
-- DINOv2 ViT-S/14 remains the default backbone
-- cached features are reused
-- training jobs are controlled and versioned
-- previous active model survives a failed train
-- training and assessment photos remain separated
-- user-facing confidence/model version is stored per assessment
-
-### Hostinger
-
-- GEO Tree has a separate directory, Compose project, containers, network, volumes, database, and environment
-- MongoDB and AI are private
-- Caddy route is additive
-- Museum source, data, containers, and existing API route are not repurposed
-- memory/disk constraints are verified
-- uploads/models/history persist across GEO Tree container recreation
-- actual Museum health was checked before and after
-- rollback affects GEO Tree only
-
-### QR/download
-
-- existing QR destination is verified and preserved
-- stable route serves the latest APK
-- per-release SHA-256 checksum is provided
-- no new QR is generated unless the user separately approves it
-
----
-
-## 19. Out of Scope Unless Explicitly Approved
+### A.19 Out of Scope Unless Explicitly Approved
 
 - replacing DINOv2 ViT-S/14
 - full-backbone fine-tuning
@@ -858,9 +869,7 @@ Do not start expensive training or TripoSR simply to test resource limits.
 - QR regeneration
 - production deployment steps that may interrupt Museum availability
 
----
-
-## 20. Required Engineering Report
+### A.20 Required Engineering Report
 
 For every substantial task, report:
 
@@ -877,3 +886,19 @@ For every substantial task, report:
 11. Known limitations and next safest step.
 
 Never claim completion for untested functionality.
+
+### A.22 Split Hygiene and Model Evaluation
+
+- Deduplicate using SHA-256; use perceptual hashing or embedding similarity as a review signal for near-duplicates. Do not automatically delete distinct images solely due to similarity.
+- Keep captures of the same leaf/session, burst shots, and resized/cropped copies in one split. Use a deterministic seed and group-aware stratification where possible. Ensure every class is represented in validation/test; document any unavoidable limitation.
+- Never use training images for the reported final test metrics. Keep the test split locked while selecting the model. If there is no independent test collection, call results an internal split estimate, not independent field validation.
+- Prefer balanced accuracy and macro/per-class precision, recall, F1, support, and a confusion matrix, alongside total accuracy. Store split IDs and exact counts. Compare a baseline only on the same held-out images.
+- Do not claim 95% or any other accuracy for the new model until measured on the new dataset with its documented split. Do not guarantee perfect accuracy.
+
+### A.23 Mobile Model Bundle and Offline Acceptance Gate
+
+Use the existing DINOv2 ViT-S/14 frozen feature extractor and classifier-head pipeline unless a measured reason and explicit approval justify changing it. Use the project's verified mobile exporter (expected: `backend/scripts/export_mobile_model.py`) and actual model asset names/path discovered in `LeafModelStore` and `OnDeviceLeafClassifier`.
+
+The exported bundle must use the exact class order `Healthy`, `Spotting`, `Powdery Mildew`, correct preprocessing, compatible model/cache key, model version, and checksums. Python/ONNX parity and Android model parity must pass. Include the bundle in the APK and verify APK contents and sizes.
+
+Required real acceptance check: enable airplane mode, launch the app, classify a new image stored on-device, verify the model produces a prediction without contacting the API, save the assessment locally, close/reopen as appropriate, and verify the local record/history persists. Reconnect and confirm sync is idempotent. Clearly state whether this was tested on a physical device or an emulator. Never treat an ordinary backend health check as proof of offline inference.

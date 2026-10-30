@@ -9,6 +9,7 @@ import {
   Map as MapIcon,
   Menu,
   ScanSearch,
+  Smartphone,
   Tags,
   TreePine,
   Users,
@@ -53,6 +54,7 @@ export const NAV_GROUPS: Array<{ label: string; items: NavItem[] }> = [
   {
     label: "Administration",
     items: [
+      { to: "/mobile", label: "Mobile Settings", icon: Smartphone },
       { to: "/users", label: "Users", icon: Users },
       { to: "/activity", label: "Activity Log", icon: Activity },
     ],
@@ -71,6 +73,7 @@ const TITLES: Array<[RegExp, string, string?]> = [
   [/^\/classifiers\/[^/]+/, "Training Images", "/classifiers"],
   [/^\/classifiers/, "Classifiers"],
   [/^\/models/, "Models & Training"],
+  [/^\/mobile/, "Mobile Settings"],
   [/^\/users/, "Users"],
   [/^\/activity/, "Activity Log"],
 ];

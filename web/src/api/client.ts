@@ -156,3 +156,17 @@ export function uploadWithProgress<T>(path: string, form: FormData, onProgress: 
     xhr.send(form);
   });
 }
+
+/** Downloads a protected file (bearer token required, so a plain link cannot be used). */
+export async function downloadProtectedFile(path: string, fileName: string): Promise<void> {
+  const response = await fetch(path, { headers: authHeaders() });
+  if (!response.ok) throw await toApiError(response);
+  const url = URL.createObjectURL(await response.blob());
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1_000);
+}

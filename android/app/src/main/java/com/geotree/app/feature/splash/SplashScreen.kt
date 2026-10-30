@@ -108,6 +108,7 @@ fun SplashScreen(onReady: (SplashDestination) -> Unit) {
             restoreSession = { c.sessionStore.current() },
             prepareApiClient = {
                 c.backendConfig.migrateLegacyLocalOverride() // hosted builds leave old local servers behind
+                c.backendConfig.forgetRetiredServer() // the former VPS is gone; fall back to the build default
                 c.apiProvider.api()
             },
             scheduleSync = {

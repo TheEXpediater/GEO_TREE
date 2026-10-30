@@ -6,3 +6,5 @@ PyJWT==2.15.0
 bcrypt==5.0.0
 python-multipart==0.0.32
 python-dotenv==1.2.3
+# Pure-Python QR encoder (no dependencies) for the stable APK download link in Mobile Settings.
+segno==1.6.6

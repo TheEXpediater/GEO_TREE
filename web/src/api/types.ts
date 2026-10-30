@@ -319,3 +319,201 @@ export interface EvidenceResponse {
   treeCount: number;
   truncated: boolean;
 }
+
+// Mobile Settings --------------------------------------------------------------------------------
+export interface BundledModel {
+  backbone: string | null;
+  backboneDisplayName: string | null;
+  embeddingModel: string | null;
+  embeddingDimension: number | null;
+  modelVersion: number | null;
+  classes: string[];
+  confidenceThreshold: number | null;
+  headSha256: string | null;
+  onnxSha256: string | null;
+  onnxBytes: number | null;
+  integrityOk: boolean;
+  exportParity?: Record<string, unknown> | null;
+}
+
+export interface ApkFacts {
+  fileName: string;
+  bytes: number;
+  sha256: string;
+  packageName: string | null;
+  versionName: string | null;
+  versionCode: number | null;
+  minSdk: number | null;
+  targetSdk: number | null;
+  debuggable: boolean;
+  signing: { schemes: string[]; certificateSha256: string[]; note: string | null };
+  bundledModel: BundledModel | null;
+}
+
+export interface ReleaseCheck {
+  id: string;
+  label: string;
+  /** null = not configured, so not checked. */
+  ok: boolean | null;
+}
+
+export type ReleaseStatus = "PUBLISHED" | "SUPERSEDED" | "ROLLED_BACK";
+
+export interface AppRelease {
+  id: string;
+  status: ReleaseStatus;
+  baseline: boolean;
+  versionName: string | null;
+  versionCode: number | null;
+  packageName: string | null;
+  apkFileName: string;
+  apkBytes: number;
+  apkSha256: string;
+  signerSha256: string[];
+  signatureSchemes: string[];
+  minSdk: number | null;
+  targetSdk: number | null;
+  debuggable: boolean | null;
+  model: { modelVersion: number | null; backbone: string | null; classes: string[] | null; headSha256: string | null; onnxSha256: string | null } | null;
+  dataset: { archiveId: string; fileName: string | null; sha256: string | null } | null;
+  notes: string;
+  downloadUrl: string | null;
+  registeredAt: string;
+  originalPublishedAt: string | null;
+  registeredBy: { email: string | null; role: string | null } | null;
+  events: Array<{ at: string; action: string; actor: { email: string | null; role: string | null } | null }>;
+}
+
+export type ReleaseHealth = "HEALTHY" | "UNHEALTHY" | "NOT_PUBLISHED" | "UNREGISTERED";
+
+export interface MobileOverview {
+  health: ReleaseHealth;
+  healthReason: string;
+  download: { configured: boolean; pageUrl: string | null; apkUrl: string | null; https: boolean; distributionConfigured: boolean };
+  servedApk: ApkFacts | null;
+  servedApkError: string | null;
+  checks: ReleaseCheck[];
+  pinnedSignerSha256: string | null;
+  currentRelease: AppRelease | null;
+  servedRelease: AppRelease | null;
+  qr: { url: string; pngDataUri: string } | null;
+}
+
+export interface MetricRow {
+  name: string;
+  precision: number | null;
+  recall: number | null;
+  f1: number | null;
+  support: number | null;
+}
+
+export interface EvaluationRecord {
+  id: string;
+  modelVersion: number;
+  headSha256: string | null;
+  type: string;
+  label: string;
+  samples: number | null;
+  accuracy: number | null;
+  balancedAccuracy: number | null;
+  macroF1: number | null;
+  perClass: MetricRow[];
+  confusionMatrix: { labels: string[]; matrix: number[][] } | null;
+  details: Record<string, any>;
+  limitations: string;
+  sourceFile: string | null;
+  sourceSha256: string | null;
+  evaluatedAt: string | null;
+  recordedAt: string;
+}
+
+export interface ServerModelProfile {
+  modelVersion: number;
+  backbone: string | null;
+  backboneDisplayName: string | null;
+  embeddingModel: string | null;
+  embeddingDimension: number | null;
+  head: string | null;
+  status: string | null;
+  trainedAt: string | null;
+  activatedAt: string | null;
+  classes: string[];
+  trainCount: number | null;
+  validationCount: number | null;
+  perClassCounts: Array<{ name: string; train: number | null; validation: number | null }>;
+  validation: {
+    type: string;
+    label: string;
+    samples: number | null;
+    accuracy: number | null;
+    macroF1: number | null;
+    macroPrecision: number | null;
+    macroRecall: number | null;
+    perClass: MetricRow[];
+    confusionMatrix: { labels: string[]; matrix: number[][] } | null;
+  } | null;
+}
+
+export interface ModelProfile {
+  pipeline: string | null;
+  server: ServerModelProfile | null;
+  serverAiRuntime: boolean;
+  bundled: (BundledModel & { apkVersionName: string | null; apkVersionCode: number | null; inference: string }) | null;
+  bundledError: string | null;
+  comparison: { sameVersion: boolean; sameClassOrder: boolean; sameFeatureExtractor: boolean } | null;
+  evaluations: EvaluationRecord[];
+  latestJob: { id: string; status: string; trigger: string | null; createdAt: string | null; finishedAt: string | null; modelVersion: number | null; errorMessage: string | null } | null;
+  updateNote: string;
+}
+
+export type ArchiveStatus = "VALIDATING" | "READY" | "REJECTED" | "FAILED" | "ACTIVE" | "RETIRED" | "DISCARDED";
+
+export interface ArchiveSummary {
+  entries: number;
+  imageFiles: number;
+  accepted: number;
+  statusCounts: Record<string, number>;
+  formats: Record<string, number>;
+  byClass: Record<string, Record<string, number>>;
+  acceptedByClass: Record<string, number>;
+  acceptedBySource: Record<string, Record<string, number>>;
+  remappedLabels: Array<{ from: string; to: string; count: number }>;
+  unknownLabels: string[];
+  conflictFamilies: number;
+  alreadyInActiveDataset: number;
+  uncompressedBytes: number;
+  compressedBytes: number;
+  decodeChecked: boolean;
+  heicDecodeChecked: boolean;
+  labelPolicy: string;
+}
+
+export interface DatasetArchive {
+  id: string;
+  fileName: string;
+  bytes: number;
+  sha256: string;
+  status: ArchiveStatus;
+  origin: string;
+  uploadedAt: string;
+  uploadedBy: { email: string | null; role: string | null } | null;
+  validatedAt: string | null;
+  summary: ArchiveSummary | null;
+  error: string | null;
+  split: { perClass: Record<string, Record<string, number>>; totals: Record<string, number>; manifestFile: string; manifestSha256?: string } | null;
+  activation: { activatedAt: string | null; method: string; note: string } | null;
+}
+
+export interface DatasetProfile {
+  activeTrainingImages: { total: number; byClass: Record<string, number>; bySource: Record<string, Record<string, number>>; note: string };
+  activeArchive: DatasetArchive | null;
+  consistency: { activeImages: number; inActiveArchive: number; notInActiveArchive: number } | null;
+  activeModel: { modelVersion: number; trainCount: number | null; validationCount: number | null } | null;
+  leafAssessmentPhotos: number;
+  leafAssessmentNote: string;
+  archives: DatasetArchive[];
+  archivesTotal: number;
+  uploadsEnabled: boolean;
+  maxUploadBytes: number;
+  decodeChecked: boolean;
+}

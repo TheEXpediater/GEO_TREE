@@ -1,7 +1,5 @@
-package com.geotree.app.feature.admin
+package com.geotree.app.core.session
 
-import com.geotree.app.core.session.Session
-import com.geotree.app.core.session.SessionStore
 import com.geotree.app.data.remote.GeoTreeApi
 import com.geotree.app.data.remote.LoginRequestDto
 import com.geotree.app.data.remote.UserDto
@@ -17,14 +15,14 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 
-class AdminAccessTest {
+/** The account role travels with the session (shown in Settings → Account; enforced by the server). */
+class SessionRoleTest {
     @get:Rule val temp = TemporaryFolder()
 
     private val storeScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -41,14 +39,12 @@ class AdminAccessTest {
     }
 
     @Test
-    fun `only the ADMIN and SUPER_ADMIN roles show admin entry points`() {
-        assertTrue(Session("t", "a@b.c", 0, role = "ADMIN").isAdmin)
-        assertTrue(Session("t", "a@b.c", 0, role = "SUPER_ADMIN").isAdmin)
-        assertFalse(Session("t", "a@b.c", 0, role = "FIELD_TESTER").isAdmin)
-        assertFalse(Session("t", "a@b.c", 0, role = "FIELD").isAdmin)
-        assertFalse(Session("t", "a@b.c", 0).isAdmin)
-        assertFalse(adminSectionVisible(null))
-        assertTrue(adminSectionVisible(Session("t", "a@b.c", 0, role = "ADMIN")))
+    fun `roles have readable labels and unknown roles are shown as sent`() {
+        assertEquals("Field Tester", Session("t", "a@b.c", 0, role = "FIELD_TESTER").roleLabel)
+        assertEquals("Admin", Session("t", "a@b.c", 0, role = "ADMIN").roleLabel)
+        assertEquals("Super Admin", Session("t", "a@b.c", 0, role = "SUPER_ADMIN").roleLabel)
+        assertEquals("AUDITOR", Session("t", "a@b.c", 0, role = "AUDITOR").roleLabel)
+        assertNull(Session("t", "a@b.c", 0).roleLabel)
     }
 
     @Test
@@ -66,10 +62,10 @@ class AdminAccessTest {
     fun `a session saved before roles existed gains the role from the server`() = runTest {
         val sessions = store()
         sessions.save(Session("old-token", "admin@gmail.com", 0))
-        assertFalse(sessions.current()!!.isAdmin)
+        assertNull(sessions.current()!!.role)
 
         AuthRepository({ RoleServer("ADMIN") }, sessions).refreshProfile()
-        assertTrue(sessions.current()!!.isAdmin)
+        assertEquals("Admin", sessions.current()!!.roleLabel)
         assertEquals("old-token", sessions.current()!!.accessToken)
     }
 

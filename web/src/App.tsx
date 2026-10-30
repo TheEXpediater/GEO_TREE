@@ -11,6 +11,7 @@ import { ClassImagesPage } from "./features/classifiers/ClassImagesPage";
 import { ClassifiersPage } from "./features/classifiers/ClassifiersPage";
 import { DashboardPage } from "./features/dashboard/DashboardPage";
 import { ImagesPage } from "./features/images/ImagesPage";
+import { MobileSettingsPage } from "./features/mobile/MobileSettingsPage";
 import { TagsPage } from "./features/tags/TagsPage";
 import { TreesPage } from "./features/trees/TreesPage";
 import { UsersPage } from "./features/users/UsersPage";
@@ -56,6 +57,7 @@ export function App() {
         <Route path="classifiers" element={<ClassifiersPage />} />
         <Route path="classifiers/:classId" element={<ClassImagesPage />} />
         <Route path="models" element={<ModelsPage />} />
+        <Route path="mobile" element={<MobileSettingsPage />} />
         <Route path="users" element={<UsersPage />} />
         <Route path="activity" element={<ActivityPage />} />
         <Route path="*" element={<EmptyState title="Page not found" description="This page does not exist in the GEO Tree administration." />} />

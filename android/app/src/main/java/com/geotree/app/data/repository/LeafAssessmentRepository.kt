@@ -43,6 +43,9 @@ class LeafAssessmentRepository(
 
     fun observeAssessment(id: String): Flow<LeafAssessmentEntity?> = dao.observeAssessmentById(id)
 
+    /** Scans that still have to reach the server. */
+    fun observeUnsyncedCount(): Flow<Int> = dao.observeUnsyncedCount()
+
     /** The on-device model a new scan would use. Local only: never contacts the server. */
     suspend fun modelStatus(): AiResult<LeafModelInfo> = classifier.status()
 

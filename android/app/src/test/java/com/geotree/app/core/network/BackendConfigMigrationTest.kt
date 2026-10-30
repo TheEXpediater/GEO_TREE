@@ -94,7 +94,7 @@ class BackendConfigMigrationTest {
         config.save("http://10.0.2.2:8000")
         assertTrue(config.migrateLegacyLocalOverride())
 
-        config.save("http://192.168.1.20:8000") // deliberate choice made in Settings → Change Server
+        config.save("http://192.168.1.20:8000") // deliberate choice made on the login screen → Change
         assertFalse(config.migrateLegacyLocalOverride())
         assertEquals("http://192.168.1.20:8000", config.current())
     }
@@ -106,6 +106,29 @@ class BackendConfigMigrationTest {
 
         assertFalse(config.migrateLegacyLocalOverride())
         assertEquals("http://192.168.1.20:8000", config.current())
+    }
+
+    @Test
+    fun `a saved server on the retired VPS host falls back to the build default`() = runTest {
+        val config = BackendConfig(store(), hosted)
+        config.save("https://geotree.museuma7k9x3.tech")
+
+        assertTrue(config.forgetRetiredServer())
+        assertEquals(hosted, config.current())
+        assertFalse(config.forgetRetiredServer())
+    }
+
+    @Test
+    fun `other saved servers survive the retired host cleanup`() = runTest {
+        listOf("https://geo-tree-staging.example.org", "http://192.168.1.20:8000").forEach { url ->
+            val config = BackendConfig(store(), hosted)
+            config.save(url)
+
+            assertFalse(url, config.forgetRetiredServer())
+            assertEquals(url, config.current())
+        }
+        assertFalse(BackendConfig(store(), hosted).forgetRetiredServer())
+        assertFalse(BackendConfig.isRetiredServer(hosted))
     }
 
     @Test

@@ -22,8 +22,8 @@ COPY scripts ./scripts
 COPY web_dis[t] ./web_dist/
 
 RUN useradd --create-home geotree \
-    && mkdir -p /app/uploads/tree_images /app/ai_data \
-    && chown -R geotree /app/uploads /app/ai_data
+    && mkdir -p /app/uploads/tree_images /app/ai_data /app/datasets/archives \
+    && chown -R geotree /app/uploads /app/ai_data /app/datasets
 USER geotree
 
 EXPOSE 8000

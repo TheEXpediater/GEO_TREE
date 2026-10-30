@@ -59,14 +59,14 @@ class ApiProvider(
     /** Image URL for a server-relative path such as "tree_images/abc.jpg". */
     suspend fun imageUrl(remotePath: String): String = url("uploads/$remotePath")
 
-    /** Absolute URL for an API path on the configured backend, e.g. a classifier thumbnail. */
+    /** Absolute URL for an API path on the configured backend. */
     suspend fun url(path: String): String {
         val baseUrl = backendConfig.current()
         forBaseUrl(baseUrl) // ensures the token interceptor recognises this host
         return "$baseUrl/$path"
     }
 
-    /** DINOv2 runs on the server CPU: uploads and assessments get longer timeouts than sync. */
+    /** Model status / classifier-head download (best effort after sync): a slow, cold-starting host gets more time. */
     private val aiHttpClient: OkHttpClient by lazy {
         okHttpClient.newBuilder().readTimeout(120, TimeUnit.SECONDS).writeTimeout(120, TimeUnit.SECONDS).build()
     }

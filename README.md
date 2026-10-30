@@ -2,7 +2,13 @@
 
 Android field-management app for registering, geotagging, locating and navigating to tamarind trees, with DINOv2-based tamarind leaf condition assessment. It works offline first and syncs to a shared FastAPI/MongoDB backend.
 
-## Dataset v3, Powdery Mildew and the Render API (current, 0.8.0)
+## Render + Atlas production and web Mobile Settings (2026-10-24)
+
+- **Hosting:** production stays on the Render API `https://geo-tree.onrender.com` with MongoDB Atlas (section 12). The Hostinger VPS expired (unreachable on 2026-10-24) and is not used. Release builds default to Render; Gradle refuses local, non-HTTPS and retired Hostinger hosts for a release.
+- **Web admin → Mobile Settings** (`/mobile`): the APK `/download` serves (read from the file itself: package, version, size, SHA-256, signing certificate, bundled model and its checksums), release checks, a release history that starts at the first registration (a baseline's original date is stored as unknown), the download link and its QR code, the AI model profile (server model and APK model shown separately; every metric labelled with its evaluation type and sample count) and the dataset profile with private archive upload and validation. API: `/api/v1/admin/mobile/*` (Admin read, Super Admin registers releases). See "Mobile Settings operations" in section 12.
+- **Not yet available on Render:** the deployed Render service predates Mobile Settings (not pushed), does not build the web admin, and has no durable place for the APK or dataset archives, so `/download` answers 404 there. The existing printed QR still encodes `https://geotree.museuma7k9x3.tech/download` (the expired VPS).
+
+## Dataset v3, Powdery Mildew and the Render API (0.8.0)
 
 - **New classifier dataset (2026-10-20).** The active training set was replaced with the labeled photos in `data-sets.zip` (local only, never committed; SHA-256 `82775506…`). Classes are now **Healthy, Spotting, Powdery Mildew**: the old class `Mold` was renamed in place (same class id, so earlier assessments and models stay consistent) and source folders `Mold`/`Molds` map to Powdery Mildew. Of 184 photos, 181 are usable (2 conflicting copies of `IMG_7259` and 1 exact duplicate excluded); 144 are the active training set and 37 are a **locked test set** that never entered training. See section 11, "Replacing the classifier dataset".
 - **Model v3** (frozen DINOv2 ViT-S/14 + logistic-regression head, group-aware validation): locked test set 34/37 correct (accuracy 0.919, balanced accuracy 0.890, macro-F1 0.878). This is an **internal split estimate**: test photos come from the same capture sessions as training photos. A leave-one-source-out check (train on three source folders, test on the fourth) scored 0.49–0.71, i.e. accuracy on a new photographer, day or background is likely much lower. Not field-validated.
@@ -32,7 +38,7 @@ Web Admin (React + TypeScript, served by geo-tree-api at /) ─┐
 Android field app (Kotlin/Compose, Room offline-first) ──────┘        └─ DINOv2 ViT-S/14 (in geo-tree-api)
 ```
 
-- **Two clients, one backend.** The web administration lives in `web/` and is built into `backend/web_dist`; the API serves it from the same origin (no extra container, no CORS, strict CSP, self-hosted fonts). Android keeps every field workflow **and** its admin screens (Leaf Classifiers, training images, model status, Train / Rebuild); admins now also see an Administration card on the Dashboard.
+- **Two clients, one backend.** The web administration lives in `web/` and is built into `backend/web_dist`; the API serves it from the same origin (no extra container, no CORS, strict CSP, self-hosted fonts). Android keeps every field workflow; since 0.8.1 classifier and user administration (Leaf Classifiers, training images, model status, Train / Rebuild) is web-only, and the app has no admin screens or Administration card.
 - **Roles enforced by FastAPI:** `SUPER_ADMIN`, `ADMIN`, `FIELD_TESTER` (section 13). Accounts can be suspended; a password change or reset revokes older tokens.
 - **Web modules:** dashboard (real data only), tree records (search/filter/sort/paginate, metadata edit, tags, registration photo replace/delete, archive/restore), leaf assessments (read-only review), images (registration / training / assessment evidence kept separate), tags, classifiers and training images, models & training (metrics, confusion matrix, version history, jobs), users, activity log.
 - **Archive is a soft delete.** Phones hide archived trees after their next sync (Room v4); scans and photos are kept; restore brings the tree back.
@@ -44,6 +50,8 @@ Tree Detail → Assess Leaf → photo (camera or picker) → local FastAPI → D
             → 384-d feature → trained classifier head → Healthy | Spotting | Mold | … + confidence + model version
 Settings → Administration → Leaf Classifiers (ADMIN role) → classes, training images, model status, Train / Rebuild
 ```
+
+> Since Android 0.8.1 the Administration entry is gone from the app; classifier classes, training images and model status are managed in the web admin.
 
 - **One classifier, flexible labels.** Healthy, Spotting and Mold are classes of one tamarind-leaf classifier (seeded in development), not separate models. Admins add, rename and delete classes in the app.
 - **Frozen backbone, small trained head.** DINOv2 is never fine-tuned. Each uploaded image gets its DINOv2 feature computed once and cached; dataset changes queue one coalesced rebuild of the small head from cached features.
@@ -64,7 +72,7 @@ Map: current GPS → select tree → Navigate to Tree → red direct guidance li
 - **Dashboard** (first authenticated screen): total/synced/pending/failed counts, GPS status and last known accuracy, device network, backend status (Connected / Offline / Checking), last successful sync, quick actions (Tag New Tree, Open Map, Sync Now), "N records waiting to sync", recent trees. All numbers come from Room; nothing waits on the API.
 - **Map**: MapLibre field locator with Room markers, blue current-location dot and accuracy halo, compass, GPS/accuracy/sync/navigation chips, My Location, explicit **Follow Location**, Tag Tree FAB, selected-tree sheet (thumbnail, coordinates, distance, Navigate to Tree).
 - **Field guidance** (not road routing): a red geodesic line from your position to the tree, updated from a continuous GPS stream.
-- **Settings**: backend status and URL, Test Connection, Change Server (health-checked before saving), last sync, Sync Now, basemap source, guidance settings, sign out.
+- **Settings** (since 0.8.1, exactly three sections): **Synchronization** (sync status, server reachability, last successful sync, trees and leaf scans waiting, offline/failure explanation, Sync Now), **Map** (Open Map, map source, offline PSAU map package/coverage, field-guidance settings, rescan side-loaded maps) and **Account** (email, role, session validity, Sign In to Sync when expired, Sign Out, app version). The server address is not editable in Settings: release builds default to `https://geo-tree.onrender.com`; the login screen keeps its health-checked **Server: Change** for development.
 - **Offline PSAU / Magalang field map** (follow-up): a 5.8 MB map of the deployment area is bundled in the APK and works with no internet (section 10).
 
 Not in scope (any milestone so far): TensorFlow Lite / on-device AI, OpenCV, Roboflow, Qdrant or any vector database, DINOv2 fine-tuning, turn-by-turn or road routing, voice guidance, production hosting, push notifications.
@@ -208,7 +216,7 @@ Android Studio: open the repository root (not `android/`). `local.properties` (`
 | Emulator (build default) | `http://10.0.2.2:8000` |
 | Physical phone on the same Wi-Fi | `http://<laptop-LAN-IP>:8000` |
 
-Change it in the app (**Login → Server: Change**, or **Settings → Change Server**). The app calls `/api/v1/health`, confirms that the server is GEO Tree, and saves the URL only if that check passes. You can also build with a different default: `.\gradlew.bat :android:app:assembleDebug -Pgeotree.baseUrl=http://192.168.1.20:8000`. The hosted deployment is still available as an explicit build, `-Pgeotree.baseUrl=https://geo-tree.onrender.com`; it has no leaf-assessment AI, so this milestone is tested against the local backend.
+Change it in the app on the login screen (**Login → Server: Change**; Settings has no server editor since 0.8.1). The app calls `/api/v1/health`, confirms that the server is GEO Tree, and saves the URL only if that check passes. You can also build with a different default: `.\gradlew.bat :android:app:assembleDebug -Pgeotree.baseUrl=http://192.168.1.20:8000`. Since 0.8.1 the build default depends on the build type: **release** builds use `https://geo-tree.onrender.com` (a release with a local or non-HTTPS address fails the `verifyReleaseBaseUrl` check), **debug** builds use `http://10.0.2.2:8000`; `-Pgeotree.baseUrl` overrides both. A saved server on the retired VPS host is dropped at startup so the build default applies.
 
 Physical phone: allow inbound TCP 8000 in Windows Firewall. Debug builds allow cleartext HTTP; release builds are HTTPS-only. A physical phone must never use `10.0.2.2` (that address only exists inside the emulator).
 
@@ -264,7 +272,7 @@ If the arrow drifts or the panel says "compass needs calibration", move the phon
 4. Connect the phone and the laptop to the same Wi-Fi or hotspot.
 5. Install the APK: `adb install -r android\app\build\outputs\apk\debug\app-debug.apk` (or copy that file to the phone).
 6. Open GEO Tree.
-7. Open server settings: **Login → Server: Change** (or **Settings → Change Server** once signed in).
+7. Open server settings: **Login → Server: Change** (sign out first if already signed in; Settings has no server editor since 0.8.1).
 8. Enter `http://<laptop-ip>:8000`.
 9. Tap **Test & Save**. The address is saved only if the GEO Tree health check passes.
 10. Sign in (`admin@gmail.com` / `admin123`, prefilled in debug builds).
@@ -585,7 +593,7 @@ Collections: `classifier_classes` (id, name, slug, active, timestamps), `classif
 
 ### Android
 
-- **Settings → Administration → Leaf Classifiers** (visible only to the ADMIN role): model status card (Untrained / Queued / Training / Ready / Error, active version, dataset images, last trained, validation accuracy, macro F1 and per-class precision/recall/F1), **Train / Rebuild Model**, readiness problems, and one card per class (name, image count, status). Each card has a single ⋮ menu: **Rename Classifier**, **Manage Images**, **Delete Classifier** (with confirmation). The screen polls the server only while it is visible and something is running.
+- *(Removed from Android in 0.8.1; the web admin's Classifiers and Models pages replace it.)* **Settings → Administration → Leaf Classifiers** (visible only to the ADMIN role): model status card (Untrained / Queued / Training / Ready / Error, active version, dataset images, last trained, validation accuracy, macro F1 and per-class precision/recall/F1), **Train / Rebuild Model**, readiness problems, and one card per class (name, image count, status). Each card has a single ⋮ menu: **Rename Classifier**, **Manage Images**, **Delete Classifier** (with confirmation). The screen polls the server only while it is visible and something is running.
 - **Manage Images**: thumbnail grid with file name and upload time, **Add Images** (system photo picker, up to 50 at once, uploaded one by one with progress and per-file errors such as duplicates), tap to preview or delete one image, long-press to select several and delete them (with confirmation).
 - **Tree Detail → Current Leaf Status**: AI status of the on-device model (ready / model not ready, e.g. damaged install), the newest scan that produced a class (condition, confidence, "Latest scan · date", model and version), **Assess Leaf**, and the number of assessments. This card is derived from history; nothing is stored on the tree.
 - **Tree Detail → Assessment History**: every scan of this tree, newest first (condition and confidence or "Not assessed", date, AI status, sync status). Tapping a row opens its read-only detail. Empty state: "No assessments yet. Run a leaf scan to begin monitoring this tree's condition over time."
@@ -742,10 +750,23 @@ Local Docker: classifier import, DINOv2 features, training, ONNX export, full te
 - **Smoke test (2026-10-20, local, Render mode):** the API ran from a virtualenv with only `requirements.txt` (no NumPy/Pillow/PyTorch), `RENDER=true`, `ENVIRONMENT=production`, against a throwaway database: health (`ai: disabled`, `imageStorage: disabled`), sign-in, wrong-password and missing-token refusals, tree sync, photo uploads acknowledged without bytes, assessment sync plus idempotent resend, change feeds, AI routes `503`; after a restart all records were still there exactly once. The throwaway database was then dropped.
 - **Android:** client APKs are built with `-Pgeotree.baseUrl=https://geo-tree.onrender.com` (release builds are HTTPS-only). Development builds keep `http://10.0.2.2:8000` (emulator), `http://localhost:8000` (host) and the in-app server setting for a phone on the LAN.
 
-## 12b. Historical: Hostinger VPS deployment (not used since 2026-10-20)
+### Mobile Settings operations
 
-The notes below describe the earlier deployment next to the museum app. The VPS term ended on 2026-10-19 and it is not a target any more; GEO Tree data from it was recovered to `C:\GEO_TREE_RECOVERY\2026-10-20`. The QR code still encodes `https://geotree.museuma7k9x3.tech/download`; changing the download target is a separate decision.
+| | Local Docker (`compose.yaml`) | Render (`render.yaml`) |
+|---|---|---|
+| Release checks | `RELEASE_SIGNER_SHA256` = established certificate `071b9904…3321` | not set (no APK served) |
+| Served APK (`DISTRIBUTION_DIR`) | not mounted by default | not set: `/download` answers 404 |
+| Download URL / QR (`DOWNLOAD_PUBLIC_URL`) | not set | not set until a verified download route exists |
+| Dataset archives (`DATASET_ARCHIVE_DIR`) | named volume `geo_tree_dataset_archives` | disabled: ignored while `RENDER=true` (ephemeral disk) unless `DATASET_ARCHIVE_PERSISTENT=true` marks a real persistent disk |
 
+- **Register a release** (once a download location serves the APK): Web admin → Mobile Settings → App release → *Register served APK* (Super Admin). Every value is read from the served file; registration is refused if the package, release (non-debuggable) build, signing certificate or bundled-model checksums are wrong, or if versionCode does not increase. The first record may be a **baseline** (an APK already served before tracking began; its original date stays unknown). Restoring an earlier recorded APK and registering it again is recorded as a rollback.
+- **Record the source archive of the active dataset** (local Docker): `docker compose exec backend python scripts/register_dataset_archive.py --archive <path inside the container> --expect-sha256 82775506a025599e74ed5717ee09786f06446d90158d4c6e77ff36c3365239b7 --manifest <provenance manifest> --active --activated-at <when it was activated> [--confirm]` (dry run without `--confirm`; it validates exactly like a web upload, copies the archive into the archive store and verifies the copy's hash).
+- **Evaluations shown with the model:** `python scripts/record_model_evaluation.py --report evaluation_v3.json --head-sha256 <bundled head sha> --limitations "<honest limits>" [--confirm]` records the locked-test and cross-source results from the report file (its SHA-256 is stored).
+- **Web archive uploads** only validate and stage (path-traversal, symlink, encrypted-entry, size and compression-ratio guards; content signatures, and full decoding where Pillow is installed; label aliases with `Mold`/`Molds` → Powdery Mildew; duplicates and cross-label conflicts excluded for review; CSV manifest). They never change the training dataset or start training; activation stays the controlled `replace_classifier_dataset.py` procedure in section 11.
+
+## 12b. Historical: Hostinger VPS deployment (expired; not used)
+
+The notes below describe the earlier deployment next to the museum app. The VPS term ended on 2026-10-19 and it was unreachable on 2026-10-24; it is not a target. GEO Tree data from it was recovered to `C:\GEO_TREE_RECOVERY\2026-10-20`. The printed QR code encodes `https://geotree.museuma7k9x3.tech/download` (decoded 2026-10-24); it works again only if that hostname is pointed at a verified download route.
 
 GEO Tree runs on the same Hostinger VPS as the museum app, as a **separate Compose project**. The museum stack is protected production: GEO Tree never uses its directories, volumes, networks, databases or ports.
 
@@ -771,7 +792,7 @@ geo-tree-api ─ geo-tree-internal (internal: true) ─ geo-tree-mongodb
 
 | Account | Email | Role | Can use |
 |---|---|---|---|
-| Admin | `admin@gmail.com` | `ADMIN` | everything, including Settings → Administration → Leaf Classifiers, model status and Train / Rebuild |
+| Admin | `admin@gmail.com` | `ADMIN` | everything; classifier management, model status and Train / Rebuild in the web admin (Android 0.8.1 has no admin screens) |
 | User | `user@gmail.com` | `FIELD_TESTER` | field work only: sign in, trees, photos, sync, leaf assessment, assessment history (admin screens are hidden; admin API answers `403 ADMIN_REQUIRED`) |
 
 To change a password, use the backend's own hashing from the server (`docker exec -i geo-tree-api python …` with `app.auth.security.hash_password`, also setting `password_changed_at`), never by writing a plain value into MongoDB, and never paste the value into the README, source code or the APK. A temporary account `geotree-test@gmail.com` (`FIELD_TESTER`) also exists until cleanup is requested. Classifier classes are not auto-seeded in production; create them in Admin → Classifiers.
@@ -779,7 +800,7 @@ To change a password, use the backend's own hashing from the server (`docker exe
 **Physical-device test on the hosted server.**
 1. On the phone, open `https://geotree.museuma7k9x3.tech/download` (or scan `tools/distribution/release/geotree_download_qr.png`) and install `GEO_Tree.apk`; compare its SHA-256 with the one on the page if needed. The production APK's default server is `https://geotree.museuma7k9x3.tech`.
 2. Sign in as **User** (`user@gmail.com`; password from the server credentials file, never prefilled in hosted builds). Check: Settings has no Administration section; tag a tree outdoors with a fresh GPS fix and a photo; it syncs (Dashboard → Synced); open the tree → Assess Leaf. Until a production model is trained the result is "Assessment unavailable · model not ready", recorded as a failed attempt in the tree's Assessment History.
-3. Sign out (Settings) and sign in as **Admin** (`admin@gmail.com`; password from the server credentials file). Check: Settings → Administration → Leaf Classifiers opens and shows the model status; the trees tagged as User are visible after sync.
+3. Sign out (Settings) and sign in as **Admin** (`admin@gmail.com`; password from the server credentials file). Check: the trees tagged as User are visible after sync (Android 0.8.1 shows the same field screens for every role; model status is in the web admin).
 4. Offline check: turn on airplane mode (Location on), tag another tree, confirm it saves as Pending and the history stays visible; turn networking back on and confirm it syncs.
 
 **Caddy.** The only museum-side changes: the GEO Tree site block appended to `/opt/museum-app/deploy/Caddyfile` (the `api.museuma7k9x3.tech` block is byte-identical; a backup is in `/opt/geotree/backups/`), applied with `caddy reload` (no restart), and `docker network connect geo-tree-network museum-guide-caddy-prod`. The Caddyfile is a single-file bind mount, so it must be edited **in place** (same inode; `sed -i` would break it). If the museum stack ever recreates its Caddy container, re-run the network connect, or GEO Tree answers 502:
@@ -918,6 +939,11 @@ GET    /api/v1/admin/assessments?q=&treeId=&status=&className=&from=&to=&hasImag
 GET    /api/v1/admin/assessments/facets            GET /api/v1/admin/assessments/{id}
 GET    /api/v1/admin/ai/models                     GET /api/v1/admin/ai/jobs
 GET    /api/v1/admin/map/trees?status=&tagId=&q=   GET /api/v1/admin/map/evidence?type=all|registration|assessment&status=&from=&to=&treeId=&q=&includeArchived=
+GET    /api/v1/admin/mobile/overview               served APK facts, release checks, current record, health, download URL + QR
+GET    /api/v1/admin/mobile/releases?page=&pageSize=   POST (Super Admin) {"notes", "datasetArchiveId"?, "baseline"?}
+GET    /api/v1/admin/mobile/model                  GET /api/v1/admin/mobile/dataset
+GET    /api/v1/admin/mobile/dataset/archives       POST (multipart field: file, a ZIP; validated in the background)
+GET    /api/v1/admin/mobile/dataset/archives/{id}  GET …/{id}/manifest.csv   DELETE …/{id} (discard a staged archive)
 # Classifier administration (role ADMIN or SUPER_ADMIN; also used by the Android admin screens)
 GET    /api/v1/admin/classifiers
 POST   /api/v1/admin/classifiers                          {"name": "..."}
